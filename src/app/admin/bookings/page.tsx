@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { CalendarDays, Eye, Users } from "lucide-react";
+import { CalendarDays, Eye } from "lucide-react";
 
+import { AdminPage } from "@/components/admin/admin-page";
 import { StatusSelectForm } from "@/components/admin/status-select-form";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -40,6 +41,8 @@ export default async function AdminBookingsPage({
     paymentStatus?: string;
     cleaner?: string;
     jobStatus?: string;
+    q?: string;
+    sort?: string;
   }>;
 }) {
   if (!hasSupabaseConfig()) {
@@ -53,41 +56,22 @@ export default async function AdminBookingsPage({
     return <SupabaseSetupNotice schemaMissing />;
   }
 
-  const filteredBookings = filterBookings(setupData.bookings, params);
+  const filteredBookings = sortBookings(
+    filterBookings(setupData.bookings, params),
+    params.sort
+  );
 
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto grid w-full max-w-7xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-primary">Admin dashboard</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              Bookings
-            </h1>
-            <p className="mt-3 text-muted-foreground">
-              Review service-specific requests and update each booking status.
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <Link
-              href="/admin/cleaners"
-              className={buttonVariants({ variant: "outline" })}
-            >
-              <Users className="size-4" />
-              Cleaners
-            </Link>
-            <Link href="/admin/requests" className={buttonVariants({ variant: "outline" })}>
-              Requests
-            </Link>
-            <Link href="/" className={buttonVariants({ variant: "outline" })}>
-              Home
-            </Link>
-            <Link href="/book" className={buttonVariants()}>
-              New booking
-            </Link>
-          </div>
-        </div>
-
+    <AdminPage
+      eyebrow="Admin dashboard"
+      title="Bookings"
+      description="Review service-specific requests and update each booking status."
+      actions={
+        <Link href="/book" className={buttonVariants()}>
+          New booking
+        </Link>
+      }
+    >
         <Card className="rounded-lg">
           <CardHeader>
             <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
@@ -101,6 +85,8 @@ export default async function AdminBookingsPage({
                 paymentStatus={params.paymentStatus}
                 cleaner={params.cleaner}
                 jobStatus={params.jobStatus}
+                query={params.q}
+                sort={params.sort}
                 cleaners={setupData.cleaners}
               />
             </div>
@@ -145,25 +131,6 @@ export default async function AdminBookingsPage({
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="grid gap-2">
-                            <PaymentStatusBadge
-                              status={booking.payment_status}
-                            />
-                            <span className="text-xs text-muted-foreground">
-                              {booking.payment_type ?? "Not selected"}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatRand(booking.amount_paid)}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatRand(booking.balance_due)}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {booking.latest_payment?.payment_reference ?? "None"}
-                        </TableCell>
-                        <TableCell>
                           <div className="flex items-center gap-2">
                             <CalendarDays className="size-4 text-muted-foreground" />
                             <span>
@@ -190,6 +157,25 @@ export default async function AdminBookingsPage({
                               status={booking.status}
                             />
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="grid gap-2">
+                            <PaymentStatusBadge
+                              status={booking.payment_status}
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              {booking.payment_type ?? "Not selected"}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {formatRand(booking.amount_paid)}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {formatRand(booking.balance_due)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {booking.latest_payment?.payment_reference ?? "None"}
                         </TableCell>
                         <TableCell>
                           {booking.assigned_cleaner ? (
@@ -246,8 +232,7 @@ export default async function AdminBookingsPage({
             )}
           </CardContent>
         </Card>
-      </section>
-    </main>
+    </AdminPage>
   );
 }
 
@@ -257,6 +242,8 @@ function Filters({
   paymentStatus,
   cleaner,
   jobStatus,
+  query,
+  sort,
   cleaners,
 }: {
   service?: string;
@@ -264,13 +251,21 @@ function Filters({
   paymentStatus?: string;
   cleaner?: string;
   jobStatus?: string;
+  query?: string;
+  sort?: string;
   cleaners: Cleaner[];
 }) {
   return (
     <form
-      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[180px_160px_180px_180px_170px_auto]"
+      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[180px_160px_180px_180px_170px_190px_auto]"
       action="/admin/bookings"
     >
+      <input
+        name="q"
+        defaultValue={query ?? ""}
+        placeholder="Search"
+        className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
+      />
       <select
         name="service"
         defaultValue={service ?? ""}
@@ -331,6 +326,18 @@ function Filters({
           </option>
         ))}
       </select>
+      <select
+        name="sort"
+        defaultValue={sort ?? "created_desc"}
+        className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
+      >
+        <option value="created_desc">Newest first</option>
+        <option value="date_asc">Schedule soonest</option>
+        <option value="date_desc">Schedule latest</option>
+        <option value="balance_desc">Highest balance</option>
+        <option value="paid_desc">Highest paid</option>
+        <option value="customer_asc">Customer A-Z</option>
+      </select>
       <div className="flex gap-2">
         <Button type="submit" variant="outline" className="h-9">
           Filter
@@ -351,9 +358,11 @@ function filterBookings(
     paymentStatus?: string;
     cleaner?: string;
     jobStatus?: string;
+    q?: string;
   }
 ) {
   return bookings.filter((booking) => {
+    const query = params.q?.trim().toLowerCase();
     const matchesService =
       !params.service || booking.service_data.serviceSlug === params.service;
     const matchesStatus = !params.status || booking.status === params.status;
@@ -364,14 +373,54 @@ function filterBookings(
       !params.cleaner || booking.assigned_cleaner_id === params.cleaner;
     const matchesJobStatus =
       !params.jobStatus || booking.job_status === params.jobStatus;
+    const matchesQuery =
+      !query ||
+      [
+        booking.booking_reference,
+        booking.customer_name,
+        booking.customer_email,
+        booking.customer_phone,
+        booking.service_name,
+        booking.suburb,
+        booking.city,
+        booking.assigned_cleaner?.full_name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
 
     return (
       matchesService &&
       matchesStatus &&
       matchesPaymentStatus &&
       matchesCleaner &&
-      matchesJobStatus
+      matchesJobStatus &&
+      matchesQuery
     );
+  });
+}
+
+function sortBookings(bookings: BookingWithService[], sort = "created_desc") {
+  return [...bookings].sort((a, b) => {
+    if (sort === "date_asc" || sort === "date_desc") {
+      const aTime = new Date(`${a.booking_date}T${a.booking_time.slice(0, 5)}:00`).getTime();
+      const bTime = new Date(`${b.booking_date}T${b.booking_time.slice(0, 5)}:00`).getTime();
+      return sort === "date_asc" ? aTime - bTime : bTime - aTime;
+    }
+
+    if (sort === "balance_desc") {
+      return b.balance_due - a.balance_due;
+    }
+
+    if (sort === "paid_desc") {
+      return b.amount_paid - a.amount_paid;
+    }
+
+    if (sort === "customer_asc") {
+      return a.customer_name.localeCompare(b.customer_name);
+    }
+
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
 }
 

@@ -6,6 +6,7 @@ import {
   addCleanerAvailability,
   deleteCleanerAvailability,
 } from "@/app/actions";
+import { AdminPage } from "@/components/admin/admin-page";
 import { SupabaseSetupNotice } from "@/components/admin/supabase-setup-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -48,35 +49,28 @@ export default async function CleanerProfilePage({
   }
 
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto grid w-full max-w-6xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-primary">Cleaner profile</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              {cleaner.full_name}
-            </h1>
-            <p className="mt-3 text-muted-foreground">
-              {cleaner.email} - {cleaner.phone}
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <Link
-              href="/admin/cleaners"
-              className={buttonVariants({ variant: "outline" })}
-            >
-              Back
-            </Link>
-            <Link
-              href={`/admin/cleaners/${cleaner.id}/edit`}
-              className={buttonVariants()}
-            >
-              <Pencil className="size-4" />
-              Edit
-            </Link>
-          </div>
-        </div>
-
+    <AdminPage
+      eyebrow="Cleaner profile"
+      title={cleaner.full_name}
+      description={`${cleaner.email} - ${cleaner.phone}`}
+      actions={
+        <>
+          <Link
+            href="/admin/cleaners"
+            className={buttonVariants({ variant: "outline" })}
+          >
+            Back
+          </Link>
+          <Link
+            href={`/admin/cleaners/${cleaner.id}/edit`}
+            className={buttonVariants()}
+          >
+            <Pencil className="size-4" />
+            Edit
+          </Link>
+        </>
+      }
+    >
         <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
           <Card className="h-fit rounded-lg">
             <CardHeader>
@@ -239,8 +233,7 @@ export default async function CleanerProfilePage({
             </Card>
           </div>
         </div>
-      </section>
-    </main>
+    </AdminPage>
   );
 }
 

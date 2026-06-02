@@ -4,7 +4,8 @@ import type { User } from "@supabase/supabase-js";
 import { createSupabaseServerClient, hasSupabaseAuthConfig } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
-import type { Customer } from "@/lib/types";
+import { getCleanerByUserIdOrEmail } from "@/lib/supabase/queries";
+import type { CleanerWithAvailability, Customer } from "@/lib/types";
 
 export async function getCurrentUser() {
   if (!hasSupabaseAuthConfig()) {
@@ -51,7 +52,7 @@ export async function getOptionalCustomer() {
   };
 }
 
-export async function requireAdmin(redirectTo = "/admin/bookings") {
+export async function requireAdmin(redirectTo = "/admin") {
   const user = await requireUser(redirectTo);
 
   if (!isAdminUser(user)) {
@@ -61,8 +62,35 @@ export async function requireAdmin(redirectTo = "/admin/bookings") {
   return user;
 }
 
+export async function requireCleaner(redirectTo = "/cleaner") {
+  const user = await requireUser(redirectTo);
+  const cleaner = await getCleanerByUser(user);
+
+  if (!cleaner || !cleaner.active) {
+    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+  }
+
+  return { user, cleaner };
+}
+
+export async function getOptionalCleaner() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return null;
+  }
+
+  const cleaner = await getCleanerByUser(user);
+
+  if (!cleaner) {
+    return null;
+  }
+
+  return { user, cleaner };
+}
+
 export function isAdminUser(user: User) {
-  const role = String(user.app_metadata?.role ?? user.user_metadata?.role ?? "");
+  const role = String(user.app_metadata?.role ?? "");
   const configuredAdminEmails = (process.env.ADMIN_EMAILS ?? "")
     .split(",")
     .map((email) => email.trim().toLowerCase())
@@ -72,6 +100,12 @@ export function isAdminUser(user: User) {
     role === "admin" ||
     Boolean(user.email && configuredAdminEmails.includes(user.email.toLowerCase()))
   );
+}
+
+async function getCleanerByUser(
+  user: User
+): Promise<CleanerWithAvailability | null> {
+  return getCleanerByUserIdOrEmail(user.id, user.email);
 }
 
 export async function ensureCustomerForUser(user: User): Promise<Customer> {

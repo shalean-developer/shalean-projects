@@ -1,11 +1,16 @@
 import Link from "next/link";
-import { ArrowRight, CalendarDays, MapPin, Plus } from "lucide-react";
+import { ArrowRight, CalendarDays, FileText, MapPin, MessageSquare, Plus, Repeat } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { NotificationCenter } from "@/components/platform/notification-center";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireCustomer } from "@/lib/auth";
-import { getCustomerAddresses, getCustomerBookings } from "@/lib/supabase/queries";
+import {
+  getCustomerAddresses,
+  getCustomerBookings,
+  getNotificationsForUser,
+} from "@/lib/supabase/queries";
 import type { BookingWithService } from "@/lib/types";
 
 export default async function AccountPage() {
@@ -14,6 +19,7 @@ export default async function AccountPage() {
     getCustomerBookings(customer.id),
     getCustomerAddresses(customer.id),
   ]);
+  const notifications = await getNotificationsForUser(customer.user_id, "customer");
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = bookings
     .filter((booking) => booking.booking_date >= today && booking.status !== "Cancelled")
@@ -44,6 +50,33 @@ export default async function AccountPage() {
       <BookingSection title="Upcoming bookings" bookings={upcoming} empty="No upcoming bookings yet." />
       <BookingSection title="Recent bookings" bookings={recent} empty="Your recent bookings will appear here." />
 
+      <NotificationCenter
+        initialNotifications={notifications}
+        userId={customer.user_id}
+        role="customer"
+      />
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <QuickLink
+          href="/account/recurring"
+          icon={Repeat}
+          title="Recurring plans"
+          description="Create weekly, bi-weekly, or monthly cleaning plans."
+        />
+        <QuickLink
+          href="/account/invoices"
+          icon={FileText}
+          title="Invoices"
+          description="View invoice records for your Shalean bookings."
+        />
+        <QuickLink
+          href="/account/reviews"
+          icon={MessageSquare}
+          title="Reviews"
+          description="Submit feedback after completed cleanings."
+        />
+      </div>
+
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle>Saved addresses</CardTitle>
@@ -61,6 +94,33 @@ export default async function AccountPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function QuickLink({
+  href,
+  icon: Icon,
+  title,
+  description,
+}: {
+  href: string;
+  icon: typeof Repeat;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="grid gap-3 rounded-lg border bg-card p-4 hover:bg-muted/50"
+    >
+      <Icon className="size-5 text-primary" />
+      <div>
+        <p className="font-medium">{title}</p>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+    </Link>
   );
 }
 

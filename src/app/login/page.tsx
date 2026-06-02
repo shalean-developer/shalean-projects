@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { AuthForm } from "@/components/account/auth-forms";
 import { buttonVariants } from "@/components/ui/button";
@@ -12,7 +13,9 @@ export default function LoginPage() {
       subtitle="Access your bookings, saved addresses, and account details."
     >
       {hasSupabaseAuthConfig() ? (
-        <AuthForm mode="login" />
+        <Suspense fallback={null}>
+          <AuthForm mode="login" />
+        </Suspense>
       ) : (
         <AuthConfigNotice />
       )}

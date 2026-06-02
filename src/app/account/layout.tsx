@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen, Home, MapPin, User } from "lucide-react";
+import { Bell, BookOpen, FileText, Headphones, Home, MapPin, MessageSquare, Repeat, User } from "lucide-react";
 
 import { logoutCustomer } from "@/app/actions";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -11,6 +11,11 @@ export const dynamic = "force-dynamic";
 const navItems = [
   { href: "/account", label: "Overview", icon: Home },
   { href: "/account/bookings", label: "Bookings", icon: BookOpen },
+  { href: "/account/recurring", label: "Recurring", icon: Repeat },
+  { href: "/account/invoices", label: "Invoices", icon: FileText },
+  { href: "/account/reviews", label: "Reviews", icon: MessageSquare },
+  { href: "/account/support", label: "Support", icon: Headphones },
+  { href: "/account/notifications", label: "Alerts", icon: Bell },
   { href: "/account/addresses", label: "Addresses", icon: MapPin },
   { href: "/account/profile", label: "Profile", icon: User },
 ];

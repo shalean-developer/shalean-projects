@@ -58,6 +58,10 @@ export function CleanerAssignmentControls({
             value={currentCleanerId ?? ""}
           />
           <input type="hidden" name="cleaner_id" value={selectedCleanerId} />
+          <label className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm">
+            <input name="manual_override" type="checkbox" className="size-4" />
+            Manual override
+          </label>
           <Select
             value={selectedCleanerId}
             onValueChange={(value) => {

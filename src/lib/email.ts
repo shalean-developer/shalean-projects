@@ -1,4 +1,4 @@
-import type { BookingWithService } from "@/lib/types";
+import type { AutomationType, BookingWithService, Invoice } from "@/lib/types";
 
 type EmailResult = {
   sent: boolean;
@@ -29,6 +29,38 @@ export async function sendPaymentReceiptEmail(
     subject: `Payment receipt: ${booking.booking_reference}`,
     html: paymentReceiptHtml(booking),
     text: paymentReceiptText(booking),
+  });
+}
+
+export async function sendAutomationEmail({
+  booking,
+  automationType,
+}: {
+  booking: BookingWithService;
+  automationType: AutomationType;
+}): Promise<EmailResult> {
+  const template = automationTemplate(booking, automationType);
+
+  return sendEmail({
+    to: template.to,
+    subject: template.subject,
+    html: template.html,
+    text: template.text,
+  });
+}
+
+export async function sendInvoiceEmail(
+  invoice: Invoice
+): Promise<EmailResult> {
+  if (!invoice.booking) {
+    return { sent: false, error: "Invoice booking details are missing." };
+  }
+
+  return sendEmail({
+    to: invoice.booking.customer_email,
+    subject: `Shalean invoice ${invoice.invoice_number}`,
+    html: invoiceEmailHtml(invoice),
+    text: invoiceEmailText(invoice),
   });
 }
 
@@ -111,6 +143,193 @@ function paymentReceiptText(booking: BookingWithService) {
     "",
     ...textDetails(booking),
   ].join("\n");
+}
+
+function automationTemplate(
+  booking: BookingWithService,
+  automationType: AutomationType
+) {
+  const cleanerEmail = booking.assigned_cleaner?.email ?? booking.customer_email;
+  const cleanerName = booking.assigned_cleaner?.full_name ?? "Shalean cleaner";
+  const bookingTime = booking.booking_time.slice(0, 5);
+  const commonDetails = detailTable(booking);
+
+  if (automationType === "Cleaner Reminder") {
+    return {
+      to: cleanerEmail,
+      subject: `Cleaner reminder: ${booking.booking_reference}`,
+      html: layoutEmail(
+        "Cleaner reminder",
+        `
+          <p>Hi ${escapeHtml(cleanerName)}, this is a 24-hour reminder for your assigned Shalean job.</p>
+          ${commonDetails}
+        `
+      ),
+      text: [
+        "Cleaner reminder",
+        "",
+        `Hi ${cleanerName}, this is a 24-hour reminder for your assigned Shalean job.`,
+        "",
+        ...textDetails(booking),
+      ].join("\n"),
+    };
+  }
+
+  if (automationType === "Payment Reminder") {
+    return {
+      to: booking.customer_email,
+      subject: `Payment reminder: ${booking.booking_reference}`,
+      html: layoutEmail(
+        "Payment reminder",
+        `
+          <p>Your Shalean booking has a remaining balance of ${formatMoney(booking.balance_due)}.</p>
+          ${commonDetails}
+        `
+      ),
+      text: [
+        "Payment reminder",
+        "",
+        `Your Shalean booking has a remaining balance of ${formatMoney(booking.balance_due)}.`,
+        "",
+        ...textDetails(booking),
+      ].join("\n"),
+    };
+  }
+
+  if (automationType === "Post-Cleaning Follow-Up") {
+    return {
+      to: booking.customer_email,
+      subject: `How was your Shalean cleaning? ${booking.booking_reference}`,
+      html: layoutEmail(
+        "Post-cleaning follow-up",
+        `
+          <p>Thank you for choosing Shalean. We hope your space feels fresh and cared for.</p>
+          <p>If anything needs attention, reply to this email and our team will help.</p>
+          ${commonDetails}
+        `
+      ),
+      text: [
+        "Post-cleaning follow-up",
+        "",
+        "Thank you for choosing Shalean. We hope your space feels fresh and cared for.",
+        "If anything needs attention, reply to this email and our team will help.",
+        "",
+        ...textDetails(booking),
+      ].join("\n"),
+    };
+  }
+
+  if (automationType === "Review Request") {
+    return {
+      to: booking.customer_email,
+      subject: `Review your Shalean cleaning: ${booking.booking_reference}`,
+      html: layoutEmail(
+        "Review request",
+        `
+          <p>Your feedback helps us keep the service personal and reliable.</p>
+          <p>You can leave a review from your Shalean account after this completed booking.</p>
+          ${commonDetails}
+        `
+      ),
+      text: [
+        "Review request",
+        "",
+        "Your feedback helps us keep the service personal and reliable.",
+        "You can leave a review from your Shalean account after this completed booking.",
+        "",
+        ...textDetails(booking),
+      ].join("\n"),
+    };
+  }
+
+  return {
+    to: booking.customer_email,
+    subject: `Booking reminder: ${booking.booking_reference}`,
+    html: layoutEmail(
+      "Booking reminder",
+      `
+        <p>Your Shalean cleaning is scheduled for ${booking.booking_date} at ${bookingTime}.</p>
+        ${commonDetails}
+      `
+    ),
+    text: [
+      "Booking reminder",
+      "",
+      `Your Shalean cleaning is scheduled for ${booking.booking_date} at ${bookingTime}.`,
+      "",
+      ...textDetails(booking),
+    ].join("\n"),
+  };
+}
+
+function invoiceEmailHtml(invoice: Invoice) {
+  const booking = invoice.booking;
+
+  if (!booking) {
+    return "";
+  }
+
+  return layoutEmail(
+    `Invoice ${invoice.invoice_number}`,
+    `
+      <p>Your Shalean invoice is ready.</p>
+      ${invoiceTable(invoice, booking)}
+    `
+  );
+}
+
+function invoiceEmailText(invoice: Invoice) {
+  const booking = invoice.booking;
+
+  if (!booking) {
+    return "";
+  }
+
+  return [
+    `Invoice ${invoice.invoice_number}`,
+    "",
+    `Booking reference: ${booking.booking_reference}`,
+    `Service: ${booking.service_name}`,
+    `Booking date: ${booking.booking_date}`,
+    `Subtotal: ${formatMoney(invoice.subtotal)}`,
+    `Total: ${formatMoney(invoice.total)}`,
+    `Amount paid: ${formatMoney(invoice.amount_paid)}`,
+    `Balance due: ${formatMoney(invoice.balance_due)}`,
+    `Invoice status: ${invoice.invoice_status}`,
+  ].join("\n");
+}
+
+function invoiceTable(invoice: Invoice, booking: BookingWithService) {
+  const rows = [
+    ["Invoice number", invoice.invoice_number],
+    ["Booking reference", booking.booking_reference],
+    ["Customer", booking.customer_name],
+    ["Service", booking.service_name],
+    ["Add-ons", formatAddons(booking)],
+    ["Booking date", booking.booking_date],
+    ["Subtotal", formatMoney(invoice.subtotal)],
+    ["Total", formatMoney(invoice.total)],
+    ["Amount paid", formatMoney(invoice.amount_paid)],
+    ["Balance due", formatMoney(invoice.balance_due)],
+    ["Invoice status", invoice.invoice_status],
+  ];
+
+  return `
+    <table style="border-collapse: collapse; width: 100%; max-width: 620px;">
+      <tbody>
+        ${rows
+          .map(
+            ([label, value]) => `
+              <tr>
+                <td style="border: 1px solid #e5e7eb; padding: 8px; color: #6b7280;">${escapeHtml(label)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 8px; font-weight: 600;">${escapeHtml(value)}</td>
+              </tr>
+            `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 function layoutEmail(title: string, body: string) {

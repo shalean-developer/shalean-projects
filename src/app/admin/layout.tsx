@@ -7,7 +7,7 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireAdmin("/admin/bookings");
+  await requireAdmin("/admin");
 
   return children;
 }

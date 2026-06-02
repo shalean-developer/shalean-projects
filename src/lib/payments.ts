@@ -11,6 +11,8 @@ import {
   sendBookingConfirmationEmail,
   sendPaymentReceiptEmail,
 } from "@/lib/email";
+import { generateInvoiceForBooking } from "@/lib/invoices";
+import { createCustomerInAppNotification } from "@/lib/notifications";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
 import { getBookingById } from "@/lib/supabase/queries";
@@ -220,6 +222,21 @@ export async function verifyAndFinalizePayment(
 
   if (updatedBooking) {
     await sendConfirmationEmails(updatedBooking);
+    await generateInvoiceForBooking(updatedBooking);
+    if (updatedBooking.customer_id) {
+      await Promise.all([
+        createCustomerInAppNotification(updatedBooking.customer_id, {
+          title: "Payment received",
+          message: `${updatedBooking.payment_type ?? "Payment"} received for ${updatedBooking.booking_reference}.`,
+          type: "Payment received",
+        }),
+        createCustomerInAppNotification(updatedBooking.customer_id, {
+          title: "Booking confirmed",
+          message: `${updatedBooking.service_name} is confirmed for ${updatedBooking.booking_date} at ${updatedBooking.booking_time.slice(0, 5)}.`,
+          type: "Booking confirmed",
+        }),
+      ]);
+    }
   }
 
   return {

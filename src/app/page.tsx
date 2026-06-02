@@ -34,7 +34,7 @@ export default function Home() {
                 Book a cleaning
               </Link>
               <Link
-                href="/admin/bookings"
+                href="/admin"
                 className={buttonVariants({
                   size: "lg",
                   variant: "outline",

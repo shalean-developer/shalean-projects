@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Eye, Pencil, Plus } from "lucide-react";
 
 import { setCleanerActive } from "@/app/actions";
+import { AdminPage } from "@/components/admin/admin-page";
 import { SupabaseSetupNotice } from "@/components/admin/supabase-setup-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -33,32 +34,17 @@ export default async function AdminCleanersPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto grid w-full max-w-7xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-primary">Cleaner operations</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              Cleaners
-            </h1>
-            <p className="mt-3 text-muted-foreground">
-              Manage cleaner profiles, specialties, availability, and active status.
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <Link
-              href="/admin/bookings"
-              className={buttonVariants({ variant: "outline" })}
-            >
-              Bookings
-            </Link>
-            <Link href="/admin/cleaners/new" className={buttonVariants()}>
-              <Plus className="size-4" />
-              Add cleaner
-            </Link>
-          </div>
-        </div>
-
+    <AdminPage
+      eyebrow="Cleaner operations"
+      title="Cleaners"
+      description="Manage cleaner profiles, specialties, availability, and active status."
+      actions={
+        <Link href="/admin/cleaners/new" className={buttonVariants()}>
+          <Plus className="size-4" />
+          Add cleaner
+        </Link>
+      }
+    >
         <Card className="rounded-lg">
           <CardHeader>
             <div className="flex items-center justify-between gap-4">
@@ -162,8 +148,7 @@ export default async function AdminCleanersPage() {
             )}
           </CardContent>
         </Card>
-      </section>
-    </main>
+    </AdminPage>
   );
 }
 

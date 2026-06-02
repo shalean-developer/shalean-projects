@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AdminPage } from "@/components/admin/admin-page";
 import { CleanerAssignmentControls } from "@/components/admin/cleaner-assignment-controls";
 import { JobStatusSelectForm } from "@/components/admin/job-status-select-form";
 import { StatusSelectForm } from "@/components/admin/status-select-form";
@@ -64,25 +65,16 @@ export default async function AdminBookingDetailPage({
   ]);
 
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto grid w-full max-w-5xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-primary">
-              {booking.booking_reference}
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              Booking detail
-            </h1>
-            <p className="mt-3 text-muted-foreground">
-              {booking.service_name} for {booking.customer_name}
-            </p>
-          </div>
-          <Link href="/admin/bookings" className={buttonVariants({ variant: "outline" })}>
-            Back to bookings
-          </Link>
-        </div>
-
+    <AdminPage
+      eyebrow={booking.booking_reference}
+      title="Booking detail"
+      description={`${booking.service_name} for ${booking.customer_name}`}
+      actions={
+        <Link href="/admin/bookings" className={buttonVariants({ variant: "outline" })}>
+          Back to bookings
+        </Link>
+      }
+    >
         <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
           <div className="grid gap-5">
             <DetailCard title="Service Details">
@@ -289,8 +281,7 @@ export default async function AdminBookingDetailPage({
             </CardContent>
           </Card>
         </div>
-      </section>
-    </main>
+    </AdminPage>
   );
 }
 

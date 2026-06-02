@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { decideBookingRequest } from "@/app/actions";
+import { AdminPage } from "@/components/admin/admin-page";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,23 +13,11 @@ export default async function AdminRequestsPage() {
   const requests = await getBookingRequests();
 
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto grid w-full max-w-6xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-primary">Admin dashboard</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              Customer requests
-            </h1>
-            <p className="mt-3 text-muted-foreground">
-              Approve or decline reschedule and cancellation requests.
-            </p>
-          </div>
-          <Link href="/admin/bookings" className={buttonVariants({ variant: "outline" })}>
-            Back to bookings
-          </Link>
-        </div>
-
+    <AdminPage
+      eyebrow="Admin dashboard"
+      title="Customer requests"
+      description="Approve or decline reschedule and cancellation requests."
+    >
         <Card className="rounded-lg">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
@@ -53,8 +42,7 @@ export default async function AdminRequestsPage() {
             )}
           </CardContent>
         </Card>
-      </section>
-    </main>
+    </AdminPage>
   );
 }
 

@@ -7,7 +7,7 @@ shadcn/ui, and Supabase.
 
 - Customer booking flow at `/book`
 - Success page at `/booking-success`
-- Admin booking dashboard at `/admin/bookings`
+- Admin operations dashboard at `/admin`
 - Supabase-backed `services` and `bookings` tables
 - Admin status updates: Pending, Confirmed, Completed, Cancelled
 - Base price estimates for V1.0 services
@@ -52,6 +52,7 @@ Open `http://localhost:3000`.
 - `/` - Shalean MVP home screen
 - `/book` - customer booking form
 - `/booking-success` - friendly confirmation screen
+- `/admin` - admin operations dashboard
 - `/admin/bookings` - admin bookings table and status updates
 
 ## Verification
@@ -60,4 +61,3 @@ Open `http://localhost:3000`.
 npm run lint
 npm run build
 ```
-

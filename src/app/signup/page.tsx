@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { AuthForm } from "@/components/account/auth-forms";
 import { buttonVariants } from "@/components/ui/button";
@@ -21,7 +22,9 @@ export default function SignupPage() {
         <Card className="rounded-lg">
           <CardContent>
             {hasSupabaseAuthConfig() ? (
-              <AuthForm mode="signup" />
+              <Suspense fallback={null}>
+                <AuthForm mode="signup" />
+              </Suspense>
             ) : (
               <div className="grid gap-3 text-sm text-muted-foreground">
                 <CardHeader className="px-0 pt-0">
