@@ -6,12 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { services } from "@/config/services";
 import { getOptionalCustomer } from "@/lib/auth";
 import { hasSupabaseConfig } from "@/lib/supabase/admin";
-import { getCustomerAddresses } from "@/lib/supabase/queries";
+import { getCleaners, getCustomerAddresses } from "@/lib/supabase/queries";
 import { getPaymentSchemaStatus } from "@/lib/supabase/schema";
 
 export const dynamic = "force-dynamic";
 
-export default async function BookPage() {
+type BookPageProps = {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+};
+
+export default async function BookPage({ searchParams }: BookPageProps) {
   if (!hasSupabaseConfig()) {
     return <SupabaseSetupNotice />;
   }
@@ -23,44 +27,40 @@ export default async function BookPage() {
   }
 
   const account = await getOptionalCustomer();
-  const addresses = account
-    ? await getCustomerAddresses(account.customer.id)
-    : [];
+  const params = await searchParams;
+  const initialServiceSlug = getSearchParam(params.service);
+  const initialStepSlug = getSearchParam(params.step);
+  const [addresses, cleaners] = await Promise.all([
+    account ? getCustomerAddresses(account.customer.id) : Promise.resolve([]),
+    getCleaners(),
+  ]);
 
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto grid w-full max-w-6xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-primary">Book a cleaning</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">
-              Build your service-specific booking
-            </h1>
-            <p className="mt-3 max-w-2xl text-muted-foreground">
-              Choose the service, answer the details Shalean needs, add extras,
-              and review the full estimate before submitting.
-            </p>
-          </div>
-          <Link href="/" className={buttonVariants({ variant: "outline" })}>
-            Back home
-          </Link>
-        </div>
-        <BookingForm
-          services={services}
-          customer={
-            account
-              ? {
-                  fullName: account.customer.full_name,
-                  email: account.customer.email,
-                  phone: account.customer.phone ?? "",
-                }
-              : null
-          }
-          savedAddresses={addresses}
-        />
-      </section>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(222,246,233,0.85),transparent_34rem),var(--background)]">
+      <BookingForm
+        services={services}
+        cleaners={cleaners.filter((cleaner) => cleaner.active)}
+        customer={
+          account
+            ? {
+                fullName: account.customer.full_name,
+                email: account.customer.email,
+                phone: account.customer.phone ?? "",
+              }
+            : null
+        }
+        savedAddresses={addresses}
+        initialServiceSlug={initialServiceSlug}
+        initialStepSlug={initialStepSlug}
+        customerName={account?.customer.full_name ?? null}
+        loggedIn={Boolean(account)}
+      />
     </main>
   );
+}
+
+function getSearchParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function SupabaseSetupNotice({
@@ -72,20 +72,23 @@ function SupabaseSetupNotice({
 }) {
   return (
     <main className="grid min-h-screen place-items-center bg-background px-5">
-      <Card className="w-full max-w-xl rounded-lg">
-        <CardHeader>
-          <CardTitle>
+      <Card className="w-full max-w-xl rounded-lg border border-border/80 bg-card shadow-sm">
+        <CardHeader className="px-6 pt-6">
+          <CardTitle className="text-xl">
             {schemaMissing
               ? "Supabase V1.3 payments migration is required"
               : "Supabase is not configured yet"}
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 text-sm leading-6 text-muted-foreground">
+        <CardContent className="grid gap-5 px-6 pb-6 text-sm leading-6 text-muted-foreground">
           <p>
             {message ??
               "Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to your local environment, then run the SQL migration in `supabase/migrations`."}
           </p>
-          <Link href="/" className={buttonVariants({ className: "w-fit" })}>
+          <Link
+            href="/"
+            className={buttonVariants({ className: "h-11 w-fit px-4" })}
+          >
             Back home
           </Link>
         </CardContent>

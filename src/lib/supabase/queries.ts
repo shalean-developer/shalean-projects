@@ -1553,6 +1553,16 @@ function normaliseServiceData(value: unknown): BookingServiceData {
     return {
       serviceSlug: String(data.serviceSlug ?? ""),
       serviceName: String(data.serviceName ?? "Unknown service"),
+      cleanerSelectionType:
+        data.cleanerSelectionType === "preferred" ? "preferred" : "auto",
+      preferredCleanerId:
+        typeof data.preferredCleanerId === "string"
+          ? data.preferredCleanerId
+          : "",
+      preferredCleanerName:
+        typeof data.preferredCleanerName === "string"
+          ? data.preferredCleanerName
+          : "",
       questions: Array.isArray(data.questions)
         ? data.questions.map((question) => ({
             id: String(question.id),
@@ -1569,6 +1579,9 @@ function normaliseServiceData(value: unknown): BookingServiceData {
   return {
     serviceSlug: "",
     serviceName: "Unknown service",
+    cleanerSelectionType: "auto",
+    preferredCleanerId: "",
+    preferredCleanerName: "",
     questions: [],
   };
 }

@@ -97,6 +97,17 @@ export async function createBooking(values: BookingWizardValues) {
     estimatedTotal,
     parsed.data.paymentType
   );
+  const cleanerSelectionType = parsed.data.cleanerSelectionType ?? "auto";
+  const preferredCleaner =
+    cleanerSelectionType === "preferred"
+      ? {
+          preferredCleanerId: parsed.data.preferredCleanerId?.trim() ?? "",
+          preferredCleanerName: parsed.data.preferredCleanerName?.trim() ?? "",
+        }
+      : {
+          preferredCleanerId: "",
+          preferredCleanerName: "",
+        };
 
   const booking = {
     booking_reference: bookingReference,
@@ -123,6 +134,8 @@ export async function createBooking(values: BookingWizardValues) {
     service_data: {
       serviceSlug: service.slug,
       serviceName: service.name,
+      cleanerSelectionType,
+      ...preferredCleaner,
       questions: service.questions.map((question) => ({
         id: question.id,
         label: question.label,

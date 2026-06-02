@@ -4,12 +4,16 @@ import { getServiceBySlug } from "@/config/services";
 import { paymentTypes } from "@/lib/types";
 
 const serviceValueSchema = z.union([z.string(), z.number()]);
+const cleanerSelectionTypes = ["auto", "preferred"] as const;
 
 export const bookingWizardSchema = z
   .object({
     serviceSlug: z.string().min(1, "Choose a cleaning service."),
     serviceData: z.record(z.string(), serviceValueSchema),
     selectedAddons: z.array(z.string()),
+    cleanerSelectionType: z.enum(cleanerSelectionTypes),
+    preferredCleanerId: z.string().optional(),
+    preferredCleanerName: z.string().optional(),
     bookingDate: z.string().min(1, "Choose a booking date."),
     bookingTime: z.string().min(1, "Choose a booking time."),
     address: z.string().min(3, "Enter the street address."),
@@ -78,6 +82,17 @@ export const bookingWizardSchema = z
       }
     }
 
+    if (
+      values.cleanerSelectionType === "preferred" &&
+      !values.preferredCleanerId?.trim()
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["preferredCleanerId"],
+        message: "Choose a preferred cleaner or use auto-assign.",
+      });
+    }
+
     const validAddonIds = new Set(service.addons.map((addon) => addon.id));
     for (const addonId of values.selectedAddons) {
       if (!validAddonIds.has(addonId)) {
@@ -96,6 +111,9 @@ export const defaultBookingWizardValues: BookingWizardValues = {
   serviceSlug: "",
   serviceData: {},
   selectedAddons: [],
+  cleanerSelectionType: "auto",
+  preferredCleanerId: "",
+  preferredCleanerName: "",
   bookingDate: "",
   bookingTime: "",
   address: "",

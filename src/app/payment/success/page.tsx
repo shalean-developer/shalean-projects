@@ -33,37 +33,43 @@ export default async function PaymentSuccessPage({
 
   return (
     <main className="grid min-h-screen place-items-center bg-background px-5 py-10">
-      <Card className="w-full max-w-2xl rounded-lg text-center">
-        <CardContent className="grid gap-6 px-6 py-10">
+      <Card className="w-full max-w-2xl rounded-lg border border-border/80 bg-card text-center shadow-sm">
+        <CardContent className="grid gap-7 px-6 py-10 sm:px-10 sm:py-12">
           <div
             className={
               result.ok
-                ? "mx-auto grid size-16 place-items-center rounded-full bg-primary/10 text-primary"
-                : "mx-auto grid size-16 place-items-center rounded-full bg-destructive/10 text-destructive"
+                ? "mx-auto grid size-20 place-items-center rounded-full bg-primary/10 text-primary ring-8 ring-primary/5"
+                : "mx-auto grid size-20 place-items-center rounded-full bg-destructive/10 text-destructive ring-8 ring-destructive/5"
             }
           >
             {result.ok ? (
-              <CheckCircle2 className="size-9" />
+              <CheckCircle2 className="size-10" />
             ) : (
-              <CircleAlert className="size-9" />
+              <CircleAlert className="size-10" />
             )}
           </div>
           <div className="grid gap-3">
-            <h1 className="text-3xl font-semibold tracking-normal">
+            <h1 className="text-3xl font-semibold leading-tight tracking-normal sm:text-4xl">
               {result.ok ? "Booking confirmed" : "Payment not confirmed"}
             </h1>
-            <p className="text-muted-foreground">{result.message}</p>
+            <p className="mx-auto max-w-xl leading-7 text-muted-foreground">
+              {result.message}
+            </p>
           </div>
 
           {result.booking ? <PaymentDetails booking={result.booking} /> : null}
 
           <div className="flex flex-col justify-center gap-3 sm:flex-row">
-            <Link href="/book" className={buttonVariants()}>
+            <Link href="/book" className={buttonVariants({ className: "h-11 px-4" })}>
               Create another booking
             </Link>
             <Link
               href="/admin/bookings"
-              className={buttonVariants({ variant: "outline" })}
+              className={buttonVariants({
+                variant: "outline",
+                className:
+                  "h-11 border-border/80 bg-card px-4 shadow-sm hover:border-primary/30 hover:bg-primary/5",
+              })}
             >
               View admin dashboard
             </Link>
@@ -91,7 +97,7 @@ async function verifyPayment(reference: string) {
 
 function PaymentDetails({ booking }: { booking: BookingWithService }) {
   return (
-    <div className="grid gap-3 rounded-lg border bg-card p-4 text-left">
+    <div className="grid gap-3 rounded-lg border border-border/80 bg-background/60 p-5 text-left shadow-sm">
       <DetailRow label="Booking Reference" value={booking.booking_reference} />
       <DetailRow label="Payment Status" value={booking.payment_status} />
       <DetailRow label="Payment Type" value={booking.payment_type ?? "Not selected"} />
@@ -113,9 +119,9 @@ function PaymentDetails({ booking }: { booking: BookingWithService }) {
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between gap-4 text-sm">
+    <div className="grid gap-1 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:gap-4">
       <span className="text-muted-foreground">{label}</span>
-      <span className="max-w-[60%] text-right font-medium">{value}</span>
+      <span className="font-medium leading-6 sm:text-right">{value}</span>
     </div>
   );
 }

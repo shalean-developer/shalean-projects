@@ -180,6 +180,9 @@ export type Payment = {
 export type BookingServiceData = {
   serviceSlug: string;
   serviceName: string;
+  cleanerSelectionType?: "auto" | "preferred";
+  preferredCleanerId?: string;
+  preferredCleanerName?: string;
   questions: {
     id: string;
     label: string;
