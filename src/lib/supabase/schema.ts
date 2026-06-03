@@ -16,6 +16,9 @@ const missingPaymentSchemaMessage =
 const missingV15SchemaMessage =
   "The Supabase V1.5 automation and recurring bookings migration has not been applied yet. Run supabase/migrations/20260602100000_automation_recurring_v15.sql in the Supabase SQL Editor, then refresh the schema cache.";
 
+const missingAvailabilitySchemaMessage =
+  "The cleaner working schedule and leave migration has not been applied yet. Run supabase/migrations/20260603153000_dynamic_cleaner_availability_leave.sql in the Supabase SQL Editor, then refresh the schema cache.";
+
 const supabaseConnectionMessage =
   "Supabase is configured, but the app could not connect to it. Check SUPABASE_URL, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, network access, and whether the Supabase project is running.";
 
@@ -99,6 +102,39 @@ export async function getV15SchemaStatus(): Promise<PaymentSchemaStatus> {
     return schemaStatusFromError(schemaError, missingV15SchemaMessage);
   } catch (error) {
     return schemaStatusFromError(error, missingV15SchemaMessage);
+  }
+}
+
+export async function getCleanerAvailabilitySchemaStatus(): Promise<PaymentSchemaStatus> {
+  if (!hasSupabaseConfig()) {
+    return {
+      ready: false,
+      message:
+        "Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to your local environment.",
+    };
+  }
+
+  try {
+    const supabase = getSupabaseAdmin();
+    const checks = await Promise.all([
+      supabase
+        .from("cleaners")
+        .select("id, working_days, working_start_time, working_end_time")
+        .limit(1),
+      supabase
+        .from("cleaner_leave_requests")
+        .select("id, cleaner_id, request_type, start_date, end_date, reason, status, admin_notes, decided_at, created_at")
+        .limit(1),
+    ]);
+    const schemaError = checks.find((check) => check.error)?.error;
+
+    if (!schemaError) {
+      return { ready: true };
+    }
+
+    return schemaStatusFromError(schemaError, missingAvailabilitySchemaMessage);
+  } catch (error) {
+    return schemaStatusFromError(error, missingAvailabilitySchemaMessage);
   }
 }
 

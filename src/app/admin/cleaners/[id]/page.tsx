@@ -1,30 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarPlus, Pencil, Trash2 } from "lucide-react";
+import { Pencil } from "lucide-react";
 
-import {
-  addCleanerAvailability,
-  deleteCleanerAvailability,
-} from "@/app/actions";
 import { AdminPage } from "@/components/admin/admin-page";
 import { SupabaseSetupNotice } from "@/components/admin/supabase-setup-notice";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { hasSupabaseConfig } from "@/lib/supabase/admin";
 import { isSupabaseSchemaMissingError } from "@/lib/supabase/errors";
-import { getCleanerById } from "@/lib/supabase/queries";
+import {
+  getBookingsByCleanerId,
+  getCleanerById,
+  getCleanerLeaveRequests,
+} from "@/lib/supabase/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +37,15 @@ export default async function CleanerProfilePage({
   if (!cleaner) {
     notFound();
   }
+
+  const [leaveRequests, bookings] = await Promise.all([
+    getCleanerLeaveRequests(cleaner.id),
+    getBookingsByCleanerId(cleaner.id),
+  ]);
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingBookings = bookings.filter(
+    (booking) => booking.booking_date >= today && booking.status !== "Cancelled"
+  );
 
   return (
     <AdminPage
@@ -95,6 +94,14 @@ export default async function CleanerProfilePage({
                 label="Completed Jobs"
                 value={String(cleaner.completed_jobs)}
               />
+              <DetailRow
+                label="Working Days"
+                value={cleaner.working_days.join(", ")}
+              />
+              <DetailRow
+                label="Working Hours"
+                value={`${cleaner.working_start_time.slice(0, 5)} - ${cleaner.working_end_time.slice(0, 5)}`}
+              />
               <Separator />
               <div className="grid gap-2">
                 <p className="text-sm text-muted-foreground">Specialties</p>
@@ -120,114 +127,81 @@ export default async function CleanerProfilePage({
           <div className="grid gap-5">
             <Card className="rounded-lg">
               <CardHeader>
-                <CardTitle>Add availability</CardTitle>
+                <CardTitle>Working schedule</CardTitle>
               </CardHeader>
-              <CardContent>
-                <form
-                  action={addCleanerAvailability}
-                  className="grid gap-4 md:grid-cols-[1fr_1fr_1fr_180px_auto]"
+              <CardContent className="grid gap-3">
+                <DetailRow
+                  label="Working Days"
+                  value={cleaner.working_days.join(", ")}
+                />
+                <DetailRow
+                  label="Working Hours"
+                  value={`${cleaner.working_start_time.slice(0, 5)} - ${cleaner.working_end_time.slice(0, 5)}`}
+                />
+                <Link
+                  href={`/admin/cleaners/${cleaner.id}/edit`}
+                  className={buttonVariants({ variant: "outline", className: "w-fit" })}
                 >
-                  <input type="hidden" name="cleaner_id" value={cleaner.id} />
-                  <Field label="Date">
-                    <Input name="available_date" type="date" required />
-                  </Field>
-                  <Field label="Start Time">
-                    <Input name="start_time" type="time" required />
-                  </Field>
-                  <Field label="End Time">
-                    <Input name="end_time" type="time" required />
-                  </Field>
-                  <Field label="Availability Status">
-                    <select
-                      name="is_available"
-                      defaultValue="true"
-                      className="h-8 rounded-lg border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="true">Available</option>
-                      <option value="false">Unavailable</option>
-                    </select>
-                  </Field>
-                  <div className="flex items-end">
-                    <Button type="submit" className="w-full">
-                      <CalendarPlus className="size-4" />
-                      Add
-                    </Button>
-                  </div>
-                </form>
+                  Edit schedule
+                </Link>
               </CardContent>
             </Card>
 
             <Card className="rounded-lg">
               <CardHeader>
                 <div className="flex items-center justify-between gap-4">
-                  <CardTitle>Availability</CardTitle>
-                  <Badge variant="secondary">
-                    {cleaner.availability.length} slots
-                  </Badge>
+                  <CardTitle>Leave requests</CardTitle>
+                  <Badge variant="secondary">{leaveRequests.length} total</Badge>
                 </div>
               </CardHeader>
-              <CardContent>
-                {cleaner.availability.length ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Start Time</TableHead>
-                          <TableHead>End Time</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Remove</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {cleaner.availability.map((slot) => (
-                          <TableRow key={slot.id}>
-                            <TableCell>{formatDate(slot.available_date)}</TableCell>
-                            <TableCell>{slot.start_time.slice(0, 5)}</TableCell>
-                            <TableCell>{slot.end_time.slice(0, 5)}</TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={slot.is_available ? "secondary" : "outline"}
-                              >
-                                {slot.is_available ? "Available" : "Unavailable"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <form action={deleteCleanerAvailability}>
-                                <input
-                                  type="hidden"
-                                  name="cleaner_id"
-                                  value={cleaner.id}
-                                />
-                                <input
-                                  type="hidden"
-                                  name="availability_id"
-                                  value={slot.id}
-                                />
-                                <Button
-                                  type="submit"
-                                  variant="destructive"
-                                  size="icon"
-                                  aria-label="Remove availability"
-                                >
-                                  <Trash2 className="size-4" />
-                                </Button>
-                              </form>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="grid min-h-44 place-items-center rounded-lg border border-dashed text-center">
-                    <div className="grid gap-2">
-                      <p className="font-medium">No availability added</p>
+              <CardContent className="grid gap-3">
+                {leaveRequests.length ? (
+                  leaveRequests.map((request) => (
+                    <div key={request.id} className="grid gap-2 rounded-lg border bg-background p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium">{request.request_type}</p>
+                        <Badge variant={request.status === "Approved" ? "default" : "secondary"}>
+                          {request.status}
+                        </Badge>
+                      </div>
                       <p className="text-sm text-muted-foreground">
-                        Add date and time windows before assigning bookings.
+                        {formatDate(request.start_date)} - {formatDate(request.end_date)}
                       </p>
+                      <p className="text-sm text-muted-foreground">{request.reason}</p>
                     </div>
+                  ))
+                ) : (
+                  <div className="grid min-h-32 place-items-center rounded-lg border border-dashed text-center">
+                    <p className="text-sm text-muted-foreground">
+                      No leave requests submitted.
+                    </p>
                   </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-lg">
+              <CardHeader>
+                <CardTitle>Upcoming bookings</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                {upcomingBookings.length ? (
+                  upcomingBookings.slice(0, 8).map((booking) => (
+                    <Link
+                      key={booking.id}
+                      href={`/admin/bookings/${booking.id}`}
+                      className="rounded-lg border bg-background p-3 text-sm hover:bg-muted/50"
+                    >
+                      <p className="font-medium">{booking.service_name}</p>
+                      <p className="text-muted-foreground">
+                        {booking.booking_date} at {booking.booking_time.slice(0, 5)} - {booking.suburb}
+                      </p>
+                    </Link>
+                  ))
+                ) : (
+                  <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    No upcoming bookings assigned.
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -242,21 +216,6 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between gap-4 text-sm">
       <span className="text-muted-foreground">{label}</span>
       <span className="text-right font-medium">{value}</span>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid gap-2">
-      <Label>{label}</Label>
-      {children}
     </div>
   );
 }

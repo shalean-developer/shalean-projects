@@ -21,8 +21,6 @@ import {
 import {
   ensureCustomerForUser,
   getOptionalCustomer,
-  getOptionalCleaner,
-  isAdminUser,
   requireAdmin,
   requireCleaner,
   requireCustomer,
@@ -46,8 +44,9 @@ import {
 import { calculatePaymentAmount } from "@/lib/paystack";
 import { initializeBookingPayment } from "@/lib/payments";
 import {
-  availabilityFormSchema,
   cleanerFormSchema,
+  leaveDecisionSchema,
+  leaveRequestSchema,
   type CleanerFormValues,
 } from "@/lib/cleaner-schema";
 import {
@@ -1064,65 +1063,65 @@ export async function setCleanerActive(formData: FormData) {
   revalidatePath(`/admin/cleaners/${cleanerId}`);
 }
 
-export async function addCleanerAvailability(formData: FormData) {
-  const user = await requireUser("/cleaner/availability");
-  const parsed = availabilityFormSchema.safeParse({
+export async function createCleanerLeaveRequest(formData: FormData) {
+  const { cleaner } = await requireCleaner("/cleaner/availability");
+  const parsed = leaveRequestSchema.safeParse({
     cleanerId: formData.get("cleaner_id"),
-    availableDate: formData.get("available_date"),
-    startTime: formData.get("start_time"),
-    endTime: formData.get("end_time"),
-    isAvailable: formData.get("is_available"),
+    requestType: formData.get("request_type"),
+    startDate: formData.get("start_date"),
+    endDate: formData.get("end_date"),
+    reason: formData.get("reason"),
   });
 
-  if (!parsed.success) {
-    throw new Error("Please enter a valid availability window.");
-  }
-
-  const cleanerAccount = await getOptionalCleaner();
-
-  if (!isAdminUser(user) && cleanerAccount?.cleaner.id !== parsed.data.cleanerId) {
-    throw new Error("You can only manage your own availability.");
+  if (!parsed.success || parsed.data.cleanerId !== cleaner.id) {
+    throw new Error("Please complete the leave request details.");
   }
 
   const { error } = await getSupabaseAdmin()
-    .from("cleaner_availability")
+    .from("cleaner_leave_requests")
     .insert({
-      cleaner_id: parsed.data.cleanerId,
-      available_date: parsed.data.availableDate,
-      start_time: parsed.data.startTime,
-      end_time: parsed.data.endTime,
-      is_available: parsed.data.isAvailable,
+      cleaner_id: cleaner.id,
+      request_type: parsed.data.requestType,
+      start_date: parsed.data.startDate,
+      end_date: parsed.data.endDate,
+      reason: parsed.data.reason,
+      status: "Pending",
     });
 
   if (error) {
-    throw new Error(error.message);
+    throw toSupabaseError(error);
   }
 
-  revalidatePath(`/admin/cleaners/${parsed.data.cleanerId}`);
   revalidatePath("/cleaner/availability");
+  revalidatePath("/admin/schedule");
 }
 
-export async function deleteCleanerAvailability(formData: FormData) {
-  const user = await requireUser("/cleaner/availability");
-  const cleanerId = getRequiredString(formData, "cleaner_id");
-  const availabilityId = getRequiredString(formData, "availability_id");
-  const cleanerAccount = await getOptionalCleaner();
+export async function updateCleanerLeaveRequestStatus(formData: FormData) {
+  await requireAdmin("/admin/schedule");
+  const parsed = leaveDecisionSchema.safeParse({
+    leaveRequestId: formData.get("leave_request_id"),
+    status: formData.get("status"),
+    adminNotes: formData.get("admin_notes"),
+  });
 
-  if (!isAdminUser(user) && cleanerAccount?.cleaner.id !== cleanerId) {
-    throw new Error("You can only manage your own availability.");
+  if (!parsed.success) {
+    throw new Error("Leave request decision is invalid.");
   }
 
   const { error } = await getSupabaseAdmin()
-    .from("cleaner_availability")
-    .delete()
-    .eq("id", availabilityId)
-    .eq("cleaner_id", cleanerId);
+    .from("cleaner_leave_requests")
+    .update({
+      status: parsed.data.status,
+      admin_notes: parsed.data.adminNotes?.trim() || null,
+      decided_at: new Date().toISOString(),
+    })
+    .eq("id", parsed.data.leaveRequestId);
 
   if (error) {
-    throw new Error(error.message);
+    throw toSupabaseError(error);
   }
 
-  revalidatePath(`/admin/cleaners/${cleanerId}`);
+  revalidatePath("/admin/schedule");
   revalidatePath("/cleaner/availability");
 }
 
@@ -1353,10 +1352,6 @@ export async function assignCleanerToBooking(formData: FormData) {
 
   if (conflicts.overlappingBookings.length && !manualOverride) {
     throw new Error("Cleaner already has an overlapping job. Use manual override to assign anyway.");
-  }
-
-  if (conflicts.sameDateBookings.length) {
-    throw new Error("Cleaner already has a booking on this date and cannot be double-booked.");
   }
 
   const { error: bookingError } = await getSupabaseAdmin()
@@ -2489,6 +2484,9 @@ function toCleanerPayload(values: CleanerFormValues) {
     profile_photo: values.profilePhoto || null,
     bio: values.bio || null,
     specialties: values.specialties,
+    working_days: values.workingDays,
+    working_start_time: values.workingStartTime,
+    working_end_time: values.workingEndTime,
     rating: values.rating,
     completed_jobs: values.completedJobs,
     active: values.active,

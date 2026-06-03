@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
+import { workingDays } from "@/lib/types";
 import type {
   ServiceConfig,
   ServiceFeeType,
@@ -17,6 +18,8 @@ import type {
   Cleaner,
   CleanerDateAvailability,
   CleanerEarning,
+  CleanerLeaveRequest,
+  LeaveRequestStatus,
   CleanerAvailability,
   CleanerSpecialty,
   CleanerWithAvailability,
@@ -50,10 +53,14 @@ import type {
   SupportTicket,
   SupportTicketStatus,
   UserRole,
+  WorkingDay,
 } from "@/lib/types";
 
+const cleanerSelect =
+  "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, working_days, working_start_time, working_end_time, rating, completed_jobs, active, created_at";
+
 const bookingSelect =
-  "id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, number_of_cleaners, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), booking_assignments(id, booking_id, cleaner_id, assignment_status, is_team_leader, assigned_at, created_at, cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at)), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)";
+  `id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, number_of_cleaners, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(${cleanerSelect}), booking_assignments(id, booking_id, cleaner_id, assignment_status, is_team_leader, assigned_at, created_at, cleaners(${cleanerSelect})), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)`;
 
 const recurringBookingSelect =
   "id, customer_id, service_id, address_id, frequency, preferred_day, preferred_time, service_data, selected_addons, estimated_price, status, next_booking_date, created_at, services(name), customer_addresses(id, customer_id, label, address, suburb, city, access_instructions, gate_code, parking_instructions, is_default, created_at), customers(id, user_id, full_name, email, phone, created_at)";
@@ -68,10 +75,10 @@ const supportTicketSelect =
   `id, customer_id, booking_id, subject, message, status, priority, assigned_admin_id, created_at, updated_at, customers(id, user_id, full_name, email, phone, created_at), bookings(${bookingSelect}), support_messages(id, ticket_id, sender_id, sender_role, message, created_at)`;
 
 const payrollRecordSelect =
-  `id, cleaner_id, booking_id, amount, bonus, deduction, status, paid_at, created_at, cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), bookings(${bookingSelect})`;
+  `id, cleaner_id, booking_id, amount, bonus, deduction, status, paid_at, created_at, cleaners(${cleanerSelect}), bookings(${bookingSelect})`;
 
 const cleanerEarningSelect =
-  `id, cleaner_id, booking_id, gross_amount, platform_fee, booking_amount, service_fee, net_booking_value, cleaner_percentage, cleaner_role, tenure_months, calculation_details, net_amount, status, created_at, cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), bookings(${bookingSelect})`;
+  `id, cleaner_id, booking_id, gross_amount, platform_fee, booking_amount, service_fee, net_booking_value, cleaner_percentage, cleaner_role, tenure_months, calculation_details, net_amount, status, created_at, cleaners(${cleanerSelect}), bookings(${bookingSelect})`;
 
 const serviceConfigSelect =
   "id, slug, name, short_description, description, base_price, room_price, bathroom_price, service_fee_type, service_fee_amount, duration_minutes, active, question_schema, benefits, included, pricing_rule_notes, created_at, updated_at, service_addons(id, addon_key, label, price, active), service_pricing_rules(id, name, rule_type, adjustment_type, adjustment_value, active, starts_at, ends_at, notes)";
@@ -588,9 +595,7 @@ export async function getRecurringPlanChangeRequests(
 export async function getCleaners(): Promise<Cleaner[]> {
   const { data, error } = await getSupabaseAdmin()
     .from("cleaners")
-    .select(
-      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
-    )
+    .select(cleanerSelect)
     .order("full_name", { ascending: true });
 
   if (error) {
@@ -605,9 +610,7 @@ export async function getCleanerById(
 ): Promise<CleanerWithAvailability | null> {
   const { data, error } = await getSupabaseAdmin()
     .from("cleaners")
-    .select(
-      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
-    )
+    .select(cleanerSelect)
     .eq("id", cleanerId)
     .single();
 
@@ -631,9 +634,7 @@ export async function getCleanerByUserIdOrEmail(
 ): Promise<CleanerWithAvailability | null> {
   let query = getSupabaseAdmin()
     .from("cleaners")
-    .select(
-      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
-    );
+    .select(cleanerSelect);
 
   if (email) {
     query = query.or(`user_id.eq.${userId},email.ilike.${email}`);
@@ -676,6 +677,55 @@ export async function getCleanerAvailability(
   return (data ?? []).map(mapCleanerAvailability);
 }
 
+export async function getCleanerLeaveRequests(
+  cleanerId: string
+): Promise<CleanerLeaveRequest[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("cleaner_leave_requests")
+    .select(
+      `id, cleaner_id, request_type, start_date, end_date, reason, status, admin_notes, decided_at, created_at, cleaners(${cleanerSelect})`
+    )
+    .eq("cleaner_id", cleanerId)
+    .order("start_date", { ascending: true });
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return (data ?? []).map(mapCleanerLeaveRequest);
+}
+
+export async function getCleanerLeaveRequestsInRange({
+  startDate,
+  endDate,
+  status,
+}: {
+  startDate: string;
+  endDate: string;
+  status?: "Pending" | "Approved" | "Rejected";
+}): Promise<CleanerLeaveRequest[]> {
+  let query = getSupabaseAdmin()
+    .from("cleaner_leave_requests")
+    .select(
+      `id, cleaner_id, request_type, start_date, end_date, reason, status, admin_notes, decided_at, created_at, cleaners(${cleanerSelect})`
+    )
+    .lte("start_date", endDate)
+    .gte("end_date", startDate)
+    .order("created_at", { ascending: false });
+
+  if (status) {
+    query = query.eq("status", status);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return (data ?? []).map(mapCleanerLeaveRequest);
+}
+
 export async function getMatchingAvailableCleaners(
   booking: BookingWithService
 ): Promise<Cleaner[]> {
@@ -702,10 +752,8 @@ export async function getCleanerDateAvailability({
   excludeBookingId?: string;
 }): Promise<CleanerDateAvailability[]> {
   const serviceSpecialty = serviceName as CleanerSpecialty;
-  const time = bookingTime?.slice(0, 5) || "00:00";
   const cleaners = (await getCleaners()).filter(
-    (cleaner) =>
-      cleaner.active && cleaner.specialties.includes(serviceSpecialty)
+    (cleaner) => cleaner.specialties.includes(serviceSpecialty)
   );
 
   if (!cleaners.length) {
@@ -713,42 +761,41 @@ export async function getCleanerDateAvailability({
   }
 
   const cleanerIds = cleaners.map((cleaner) => cleaner.id);
-  const [availabilityResult, assignmentsResult] = await Promise.all([
-    getSupabaseAdmin()
-      .from("cleaner_availability")
-      .select(
-        "id, cleaner_id, available_date, start_time, end_time, is_available, created_at"
-      )
-      .in("cleaner_id", cleanerIds)
-      .eq("available_date", bookingDate)
-      .eq("is_available", true),
+  const [assignmentsResult, leaveResult] = await Promise.all([
     getSupabaseAdmin()
       .from("booking_assignments")
       .select(`cleaner_id, bookings(${bookingSelect})`)
       .in("cleaner_id", cleanerIds)
       .neq("assignment_status", "Cancelled"),
+    getSupabaseAdmin()
+      .from("cleaner_leave_requests")
+      .select("cleaner_id, start_date, end_date, status")
+      .in("cleaner_id", cleanerIds)
+      .eq("status", "Approved")
+      .lte("start_date", bookingDate)
+      .gte("end_date", bookingDate),
   ]);
-
-  if (availabilityResult.error) {
-    throw toSupabaseError(availabilityResult.error);
-  }
 
   if (assignmentsResult.error) {
     throw toSupabaseError(assignmentsResult.error);
   }
 
-  const availableByCleaner = new Set(
-    (availabilityResult.data ?? [])
-      .map(mapCleanerAvailability)
-      .filter(
-        (slot) =>
-          !bookingTime ||
-          (slot.start_time.slice(0, 5) <= time &&
-            slot.end_time.slice(0, 5) >= time)
-      )
-      .map((slot) => slot.cleaner_id)
-  );
+  if (leaveResult.error) {
+    throw toSupabaseError(leaveResult.error);
+  }
+
   const busyByCleaner = new Set<string>();
+  const leaveByCleaner = new Set(
+    (leaveResult.data ?? []).map((item) => String(item.cleaner_id))
+  );
+  const requestedStart = bookingTime
+    ? new Date(`${bookingDate}T${bookingTime.slice(0, 5)}:00`)
+    : null;
+  const requestedEnd = requestedStart ? new Date(requestedStart) : null;
+
+  if (requestedEnd) {
+    requestedEnd.setHours(requestedEnd.getHours() + 3);
+  }
 
   for (const assignment of assignmentsResult.data ?? []) {
     const relatedBooking = Array.isArray(assignment.bookings)
@@ -764,19 +811,42 @@ export async function getCleanerDateAvailability({
     if (
       booking.id !== excludeBookingId &&
       booking.booking_date === bookingDate &&
-      booking.status !== "Cancelled"
+      booking.status !== "Cancelled" &&
+      (requestedStart && requestedEnd
+        ? getBookingStart(booking) < requestedEnd &&
+          getBookingEnd(booking) > requestedStart
+        : true)
     ) {
       busyByCleaner.add(String(assignment.cleaner_id));
     }
   }
 
   return cleaners.map((cleaner) => {
-    if (busyByCleaner.has(cleaner.id)) {
-      return { cleaner, status: "busy", reason: "Already booked on this date" };
+    if (!cleaner.active) {
+      return { cleaner, status: "inactive", reason: "Inactive" };
     }
 
-    if (!availableByCleaner.has(cleaner.id)) {
-      return { cleaner, status: "unavailable", reason: "No availability slot" };
+    if (!cleaner.working_days.includes(getWorkingDayName(bookingDate))) {
+      return { cleaner, status: "unavailable", reason: "Not scheduled to work" };
+    }
+
+    if (
+      bookingTime &&
+      !isWithinWorkingHours(
+        bookingTime,
+        cleaner.working_start_time,
+        cleaner.working_end_time
+      )
+    ) {
+      return { cleaner, status: "unavailable", reason: "Outside working hours" };
+    }
+
+    if (leaveByCleaner.has(cleaner.id)) {
+      return { cleaner, status: "leave", reason: "Approved leave" };
+    }
+
+    if (busyByCleaner.has(cleaner.id)) {
+      return { cleaner, status: "busy", reason: "Booking conflict" };
     }
 
     return { cleaner, status: "available", reason: "Available" };
@@ -797,42 +867,40 @@ export async function getScheduleConflicts(
   const end = getBookingEnd(booking);
   const bookingStartTime = start.toISOString();
   const bookingEndTime = end.toISOString();
-  const bookingEndLocalTime = `${String(end.getHours()).padStart(2, "0")}:${String(
-    end.getMinutes()
-  ).padStart(2, "0")}`;
 
-  const [availabilityResult, overlapResult] = await Promise.all([
-    getSupabaseAdmin()
-      .from("cleaner_availability")
-      .select(
-        "id, cleaner_id, available_date, start_time, end_time, is_available, created_at"
-      )
-      .eq("cleaner_id", cleanerId)
-      .eq("available_date", booking.booking_date)
-      .eq("is_available", true),
+  const [overlapResult, leaveResult] = await Promise.all([
     getSupabaseAdmin()
       .from("booking_assignments")
       .select(`id, bookings(${bookingSelect})`)
       .eq("cleaner_id", cleanerId)
       .neq("assignment_status", "Cancelled"),
+    getSupabaseAdmin()
+      .from("cleaner_leave_requests")
+      .select("id")
+      .eq("cleaner_id", cleanerId)
+      .eq("status", "Approved")
+      .lte("start_date", booking.booking_date)
+      .gte("end_date", booking.booking_date),
   ]);
-
-  if (availabilityResult.error) {
-    throw toSupabaseError(availabilityResult.error);
-  }
 
   if (overlapResult.error) {
     throw toSupabaseError(overlapResult.error);
   }
 
-  const bookingStartLocalTime = booking.booking_time.slice(0, 5);
-  const hasAvailability = (availabilityResult.data ?? [])
-    .map(mapCleanerAvailability)
-    .some(
-      (slot) =>
-        slot.start_time.slice(0, 5) <= bookingStartLocalTime &&
-        slot.end_time.slice(0, 5) >= bookingEndLocalTime
-    );
+  if (leaveResult.error) {
+    throw toSupabaseError(leaveResult.error);
+  }
+
+  const workingDay = getWorkingDayName(booking.booking_date);
+  const hasAvailability =
+    cleaner.active &&
+    cleaner.working_days.includes(workingDay) &&
+    isWithinWorkingHours(
+      booking.booking_time,
+      cleaner.working_start_time,
+      cleaner.working_end_time
+    ) &&
+    !(leaveResult.data ?? []).length;
   const overlappingBookings = (overlapResult.data ?? [])
     .map((assignment) => {
       const relatedBooking = Array.isArray(assignment.bookings)
@@ -875,8 +943,7 @@ export async function getScheduleConflicts(
     canAssign:
       cleaner.active &&
       hasAvailability &&
-      overlappingBookings.length === 0 &&
-      sameDateBookings.length === 0,
+      overlappingBookings.length === 0,
   };
 }
 
@@ -1529,6 +1596,15 @@ function mapCleaner(cleaner: Record<string, unknown>): Cleaner {
         : null,
     bio: typeof cleaner.bio === "string" && cleaner.bio ? cleaner.bio : null,
     specialties: normaliseSpecialties(cleaner.specialties),
+    working_days: normaliseWorkingDays(cleaner.working_days),
+    working_start_time:
+      typeof cleaner.working_start_time === "string"
+        ? cleaner.working_start_time.slice(0, 5)
+        : "08:00",
+    working_end_time:
+      typeof cleaner.working_end_time === "string"
+        ? cleaner.working_end_time.slice(0, 5)
+        : "17:00",
     rating: Number(cleaner.rating ?? 0),
     completed_jobs: Number(cleaner.completed_jobs ?? 0),
     active: Boolean(cleaner.active),
@@ -1547,6 +1623,33 @@ function mapCleanerAvailability(
     end_time: String(availability.end_time ?? ""),
     is_available: Boolean(availability.is_available),
     created_at: String(availability.created_at ?? ""),
+  };
+}
+
+function mapCleanerLeaveRequest(
+  request: Record<string, unknown> & {
+    cleaners?: Record<string, unknown> | Record<string, unknown>[] | null;
+  }
+): CleanerLeaveRequest {
+  const cleaner = Array.isArray(request.cleaners)
+    ? request.cleaners[0]
+    : request.cleaners;
+
+  return {
+    id: String(request.id ?? ""),
+    cleaner_id: String(request.cleaner_id ?? ""),
+    request_type:
+      request.request_type === "Sick Leave" ? "Sick Leave" : "Leave",
+    start_date: String(request.start_date ?? ""),
+    end_date: String(request.end_date ?? ""),
+    reason: String(request.reason ?? ""),
+    status: normaliseLeaveRequestStatus(request.status),
+    admin_notes:
+      typeof request.admin_notes === "string" ? request.admin_notes : null,
+    decided_at:
+      typeof request.decided_at === "string" ? request.decided_at : null,
+    created_at: String(request.created_at ?? ""),
+    cleaner: cleaner ? mapCleaner(cleaner) : null,
   };
 }
 
@@ -1597,6 +1700,21 @@ function normaliseSpecialties(value: unknown): CleanerSpecialty[] {
   }
 
   return value.map(String) as CleanerSpecialty[];
+}
+
+function normaliseWorkingDays(value: unknown): WorkingDay[] {
+  if (!Array.isArray(value)) {
+    return ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  }
+
+  const validDays = new Set(workingDays);
+  const days = value
+    .map(String)
+    .filter((day): day is WorkingDay => validDays.has(day as WorkingDay));
+
+  return days.length
+    ? days
+    : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 }
 
 function normaliseJobStatus(value: unknown): JobStatus {
@@ -1905,6 +2023,16 @@ function normaliseSupportPriority(value: unknown): SupportPriority {
   return "Medium";
 }
 
+function normaliseLeaveRequestStatus(value: unknown): LeaveRequestStatus {
+  const status = String(value ?? "Pending");
+
+  if (status === "Approved" || status === "Rejected") {
+    return status;
+  }
+
+  return "Pending";
+}
+
 function normalisePayrollStatus(value: unknown): PayrollStatus {
   const status = String(value ?? "Pending");
 
@@ -1940,6 +2068,31 @@ function getBookingEnd(booking: BookingWithService) {
   const start = getBookingStart(booking);
   start.setHours(start.getHours() + 3);
   return start;
+}
+
+function getWorkingDayName(date: string): WorkingDay {
+  const day = new Intl.DateTimeFormat("en-ZA", { weekday: "long" }).format(
+    new Date(`${date}T00:00:00`)
+  );
+
+  return workingDays.includes(day as WorkingDay) ? (day as WorkingDay) : "Monday";
+}
+
+function isWithinWorkingHours(
+  bookingTime: string,
+  workingStartTime: string,
+  workingEndTime: string
+) {
+  const time = bookingTime.slice(0, 5);
+  const bookingStart = minutesFromTime(time);
+  const bookingEnd = bookingStart + 180;
+  return bookingStart >= minutesFromTime(workingStartTime) &&
+    bookingEnd <= minutesFromTime(workingEndTime);
+}
+
+function minutesFromTime(value: string) {
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  return hours * 60 + minutes;
 }
 
 function normaliseServiceData(value: unknown): BookingServiceData {

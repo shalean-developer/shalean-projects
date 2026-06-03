@@ -14,7 +14,7 @@ import {
   cleanerFormSchema,
   type CleanerFormValues,
 } from "@/lib/cleaner-schema";
-import { cleanerSpecialties, type Cleaner } from "@/lib/types";
+import { cleanerSpecialties, workingDays, type Cleaner } from "@/lib/types";
 
 type CleanerFormProps = {
   cleaner?: Cleaner;
@@ -40,6 +40,17 @@ export function CleanerForm({ cleaner }: CleanerFormProps) {
       profilePhoto: cleaner?.profile_photo ?? "",
       bio: cleaner?.bio ?? "",
       specialties: cleaner?.specialties ?? [],
+      workingDays:
+        cleaner?.working_days ?? [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+        ],
+      workingStartTime: cleaner?.working_start_time?.slice(0, 5) ?? "08:00",
+      workingEndTime: cleaner?.working_end_time?.slice(0, 5) ?? "17:00",
       rating: cleaner?.rating ?? 0,
       completedJobs: cleaner?.completed_jobs ?? 0,
       active: cleaner?.active ?? true,
@@ -160,6 +171,43 @@ export function CleanerForm({ cleaner }: CleanerFormProps) {
             {errors.specialties.message}
           </p>
         ) : null}
+      </div>
+
+      <div className="grid gap-3">
+        <Label>Working Days</Label>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {workingDays.map((day) => (
+            <label
+              key={day}
+              className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+            >
+              <input
+                {...register("workingDays")}
+                type="checkbox"
+                value={day}
+                className="size-4 accent-primary"
+              />
+              {day}
+            </label>
+          ))}
+        </div>
+        {errors.workingDays?.message ? (
+          <p className="text-sm text-destructive">
+            {errors.workingDays.message}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field
+          label="Working Start Time"
+          error={errors.workingStartTime?.message}
+        >
+          <Input {...register("workingStartTime")} type="time" />
+        </Field>
+        <Field label="Working End Time" error={errors.workingEndTime?.message}>
+          <Input {...register("workingEndTime")} type="time" />
+        </Field>
       </div>
 
       <label className="flex w-fit items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm">

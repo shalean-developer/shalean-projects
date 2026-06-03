@@ -8,17 +8,47 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireCleaner } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { formatRand } from "@/lib/pricing";
-import { getBookingsByCleanerId, getCleanerEarnings, getNotificationsForUser } from "@/lib/supabase/queries";
+import {
+  getBookingsByCleanerId,
+  getCleanerEarnings,
+  getCleanerLeaveRequests,
+  getNotificationsForUser,
+} from "@/lib/supabase/queries";
+import type { WorkingDay } from "@/lib/types";
 
 export default async function CleanerDashboardPage() {
   const { user, cleaner } = await requireCleaner("/cleaner");
-  const [jobs, earnings, notifications] = await Promise.all([
+  const [jobs, earnings, notifications, leaveRequests] = await Promise.all([
     getBookingsByCleanerId(cleaner.id),
     getCleanerEarnings(cleaner.id),
     getNotificationsForUser(user.id, "cleaner"),
+    getCleanerLeaveRequests(cleaner.id),
   ]);
   const today = new Date().toISOString().slice(0, 10);
   const todaysJobs = jobs.filter((job) => job.booking_date === today);
+  const next30 = buildCalendarDays(today, 30);
+  const busyDays = new Set(
+    jobs
+      .filter((job) => job.booking_date >= today && job.status !== "Cancelled")
+      .map((job) => job.booking_date)
+  );
+  const leaveDays = new Set(
+    next30.filter((date) =>
+      leaveRequests.some(
+        (request) =>
+          request.status === "Approved" &&
+          request.start_date <= date &&
+          request.end_date >= date
+      )
+    )
+  );
+  const availableDays = next30.filter(
+    (date) =>
+      cleaner.active &&
+      cleaner.working_days.includes(formatWeekday(date)) &&
+      !busyDays.has(date) &&
+      !leaveDays.has(date)
+  );
 
   return (
     <div className="grid gap-5">
@@ -31,9 +61,12 @@ export default async function CleanerDashboardPage() {
           View jobs
         </Link>
       </div>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard title="Today" value={String(todaysJobs.length)} />
         <MetricCard title="Assigned" value={String(jobs.filter((job) => job.job_status !== "Completed").length)} />
+        <MetricCard title="Available days" value={String(availableDays.length)} />
+        <MetricCard title="Busy days" value={String(busyDays.size)} />
+        <MetricCard title="Leave days" value={String(leaveDays.size)} />
         <MetricCard title="Pending earnings" value={formatRand(earnings.filter((earning) => earning.status !== "Paid").reduce((sum, earning) => sum + earning.net_amount, 0))} />
       </div>
       <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
@@ -61,4 +94,20 @@ export default async function CleanerDashboardPage() {
       </div>
     </div>
   );
+}
+
+function buildCalendarDays(startDate: string, count: number) {
+  const start = new Date(`${startDate}T00:00:00`);
+
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function formatWeekday(date: string) {
+  return new Intl.DateTimeFormat("en-ZA", { weekday: "long" }).format(
+    new Date(`${date}T00:00:00`)
+  ) as WorkingDay;
 }

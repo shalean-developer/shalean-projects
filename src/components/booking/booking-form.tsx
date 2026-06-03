@@ -197,7 +197,7 @@ export function BookingForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mobileEstimateOpen, setMobileEstimateOpen] = useState(false);
   const [dateAvailability, setDateAvailability] = useState<
-    Record<string, "available" | "busy" | "unavailable">
+    Record<string, "available" | "busy" | "leave" | "inactive" | "unavailable">
   >({});
   const initialStepIndex = getInitialStepIndex(initialStepSlug, storedStep);
   const [currentStep, setCurrentStep] = useState(initialStepIndex);
@@ -405,7 +405,7 @@ export function BookingForm({
 
         const nextAvailability: Record<
           string,
-          "available" | "busy" | "unavailable"
+          "available" | "busy" | "leave" | "inactive" | "unavailable"
         > = {};
 
         for (const item of payload?.cleaners ?? []) {
@@ -413,6 +413,8 @@ export function BookingForm({
             typeof item.id === "string" &&
             (item.status === "available" ||
               item.status === "busy" ||
+              item.status === "leave" ||
+              item.status === "inactive" ||
               item.status === "unavailable")
           ) {
             nextAvailability[item.id] = item.status;

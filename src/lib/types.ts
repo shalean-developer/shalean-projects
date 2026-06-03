@@ -138,6 +138,25 @@ export const cleanerSpecialties: CleanerSpecialty[] = [
   "Deep Cleaning",
 ];
 
+export type WorkingDay =
+  | "Monday"
+  | "Tuesday"
+  | "Wednesday"
+  | "Thursday"
+  | "Friday"
+  | "Saturday"
+  | "Sunday";
+
+export const workingDays: WorkingDay[] = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
 export type Cleaner = {
   id: string;
   user_id: string | null;
@@ -149,6 +168,9 @@ export type Cleaner = {
   profile_photo: string | null;
   bio: string | null;
   specialties: CleanerSpecialty[];
+  working_days: WorkingDay[];
+  working_start_time: string;
+  working_end_time: string;
   rating: number;
   completed_jobs: number;
   active: boolean;
@@ -167,6 +189,32 @@ export type CleanerAvailability = {
 
 export type CleanerWithAvailability = Cleaner & {
   availability: CleanerAvailability[];
+};
+
+export type LeaveRequestType = "Leave" | "Sick Leave";
+
+export const leaveRequestTypes: LeaveRequestType[] = ["Leave", "Sick Leave"];
+
+export type LeaveRequestStatus = "Pending" | "Approved" | "Rejected";
+
+export const leaveRequestStatuses: LeaveRequestStatus[] = [
+  "Pending",
+  "Approved",
+  "Rejected",
+];
+
+export type CleanerLeaveRequest = {
+  id: string;
+  cleaner_id: string;
+  request_type: LeaveRequestType;
+  start_date: string;
+  end_date: string;
+  reason: string;
+  status: LeaveRequestStatus;
+  admin_notes: string | null;
+  decided_at: string | null;
+  created_at: string;
+  cleaner?: Cleaner | null;
 };
 
 export type BookingAssignment = {
@@ -565,7 +613,7 @@ export type ScheduleConflict = {
 
 export type CleanerDateAvailability = {
   cleaner: Cleaner;
-  status: "available" | "busy" | "unavailable";
+  status: "available" | "busy" | "leave" | "inactive" | "unavailable";
   reason: string;
 };
 

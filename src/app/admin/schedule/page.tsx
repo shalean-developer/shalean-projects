@@ -1,25 +1,45 @@
 import Link from "next/link";
 
+import { updateCleanerLeaveRequestStatus } from "@/app/actions";
 import { AdminPage } from "@/components/admin/admin-page";
 import { MetricCard } from "@/components/platform/metric-card";
 import { StatusBadge } from "@/components/platform/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getBookings, getCleaners } from "@/lib/supabase/queries";
-import type { BookingWithService } from "@/lib/types";
+import {
+  getBookings,
+  getCleanerDateAvailability,
+  getCleanerLeaveRequestsInRange,
+  getServiceConfigs,
+} from "@/lib/supabase/queries";
+import type { BookingWithService, CleanerDateAvailability } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminSchedulePage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{
+    date?: string;
+    area?: string;
+    service?: string;
+    status?: string;
+  }>;
 }) {
   const params = await searchParams;
-  const [bookings, cleaners] = await Promise.all([getBookings(), getCleaners()]);
+  const [bookings, services] = await Promise.all([getBookings(), getServiceConfigs()]);
   const selectedDate = normaliseDate(params.date);
+  const selectedService = services.find((service) => service.slug === params.service) ?? services[0];
+  const selectedArea = params.area?.trim() ?? "";
+  const selectedStatus = normaliseAvailabilityStatus(params.status);
   const daily = bookings
-    .filter((booking) => booking.booking_date === selectedDate)
+    .filter(
+      (booking) =>
+        booking.booking_date === selectedDate &&
+        (!selectedArea || booking.suburb.toLowerCase().includes(selectedArea.toLowerCase())) &&
+        (!selectedService || booking.service_name === selectedService.name)
+    )
     .sort(sortBySchedule);
   const weekStart = new Date(`${selectedDate}T00:00:00`);
   const weekDays = Array.from({ length: 7 }, (_, index) => {
@@ -32,13 +52,33 @@ export default async function AdminSchedulePage({
   const weekly = bookings
     .filter((booking) => {
       const date = new Date(`${booking.booking_date}T00:00:00`);
-      return date >= weekStart && date < weekEnd;
+      return (
+        date >= weekStart &&
+        date < weekEnd &&
+        (!selectedArea ||
+          booking.suburb.toLowerCase().includes(selectedArea.toLowerCase())) &&
+        (!selectedService || booking.service_name === selectedService.name)
+      );
     })
     .sort(sortBySchedule);
   const unassigned = weekly.filter((booking) => !booking.assigned_cleaner_id);
-  const busyCleanerIds = new Set(
-    daily.flatMap((booking) => booking.assigned_cleaners.map((cleaner) => cleaner.id))
-  );
+  const [availability, pendingLeave] = await Promise.all([
+    selectedService
+      ? getCleanerDateAvailability({
+          serviceName: selectedService.name,
+          bookingDate: selectedDate,
+          bookingTime: "08:00",
+        })
+      : Promise.resolve([]),
+    getCleanerLeaveRequestsInRange({
+      startDate: selectedDate,
+      endDate: weekDays[6],
+      status: "Pending",
+    }),
+  ]);
+  const filteredAvailability = selectedStatus
+    ? availability.filter((item) => item.status === selectedStatus)
+    : availability;
 
   return (
     <AdminPage
@@ -50,8 +90,8 @@ export default async function AdminSchedulePage({
         <MetricCard title="This week" value={String(weekly.length)} />
         <MetricCard title="Unassigned" value={String(unassigned.length)} />
         <MetricCard
-          title="Active cleaners"
-          value={String(cleaners.filter((cleaner) => cleaner.active).length)}
+          title="Available cleaners"
+          value={String(availability.filter((item) => item.status === "available").length)}
         />
       </div>
 
@@ -67,6 +107,44 @@ export default async function AdminSchedulePage({
             defaultValue={selectedDate}
             className="h-9 rounded-lg border bg-background px-3 text-sm"
           />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="font-medium">Area</span>
+          <input
+            name="area"
+            defaultValue={selectedArea}
+            placeholder="Suburb"
+            className="h-9 rounded-lg border bg-background px-3 text-sm"
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="font-medium">Service Type</span>
+          <select
+            name="service"
+            defaultValue={selectedService?.slug ?? ""}
+            className="h-9 rounded-lg border bg-background px-3 text-sm"
+          >
+            {services.map((service) => (
+              <option key={service.slug} value={service.slug}>
+                {service.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="font-medium">Availability Status</span>
+          <select
+            name="status"
+            defaultValue={selectedStatus ?? ""}
+            className="h-9 rounded-lg border bg-background px-3 text-sm"
+          >
+            <option value="">All</option>
+            <option value="available">Available</option>
+            <option value="busy">Busy</option>
+            <option value="leave">Leave</option>
+            <option value="inactive">Inactive</option>
+            <option value="unavailable">Unavailable</option>
+          </select>
         </label>
         <Button type="submit" variant="outline">
           Update schedule
@@ -161,38 +239,102 @@ export default async function AdminSchedulePage({
               <CardTitle>Cleaner availability</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3">
-              {cleaners.map((cleaner) => (
-                <div key={cleaner.id} className="rounded-lg border bg-background p-3">
+              {filteredAvailability.map((item) => (
+                <div key={item.cleaner.id} className="rounded-lg border bg-background p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">{cleaner.full_name}</p>
-                    <StatusBadge
-                      status={
-                        !cleaner.active
-                          ? "Inactive"
-                          : busyCleanerIds.has(cleaner.id)
-                            ? "Busy"
-                            : "Available"
-                      }
-                    />
+                    <p className="font-medium">{item.cleaner.full_name}</p>
+                    <AvailabilityBadge status={item.status} />
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {
-                      weekly.filter(
-                        (booking) => booking.assigned_cleaner_id === cleaner.id
-                      ).length
-                    }{" "}
-                    jobs this week
+                    {item.reason} - {item.cleaner.working_start_time.slice(0, 5)} to{" "}
+                    {item.cleaner.working_end_time.slice(0, 5)}
                   </p>
                 </div>
               ))}
+              {!filteredAvailability.length ? (
+                <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">
+                  No cleaners match these filters.
+                </p>
+              ) : null}
               <Link href="/admin/bookings" className={buttonVariants({ variant: "outline" })}>
                 Assign jobs
               </Link>
             </CardContent>
           </Card>
+
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>Pending leave</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {pendingLeave.length ? (
+                pendingLeave.map((request) => (
+                  <div key={request.id} className="grid gap-3 rounded-lg border bg-background p-3">
+                    <div>
+                      <p className="font-medium">
+                        {request.cleaner?.full_name ?? "Cleaner"} - {request.request_type}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {request.start_date} to {request.end_date}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">{request.reason}</p>
+                    </div>
+                    <LeaveDecisionForm requestId={request.id} />
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">
+                  No pending leave requests.
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </AdminPage>
+  );
+}
+
+function AvailabilityBadge({ status }: { status: CleanerDateAvailability["status"] }) {
+  const label =
+    status === "available"
+      ? "Available"
+      : status === "busy"
+        ? "Busy"
+        : status === "leave"
+          ? "Leave"
+          : status === "inactive"
+            ? "Inactive"
+            : "Unavailable";
+  const variant =
+    status === "available" ? "default" : status === "busy" ? "destructive" : "secondary";
+
+  return <Badge variant={variant}>{label}</Badge>;
+}
+
+function LeaveDecisionForm({ requestId }: { requestId: string }) {
+  return (
+    <div className="grid gap-2">
+      <form action={updateCleanerLeaveRequestStatus} className="grid gap-2">
+        <input type="hidden" name="leave_request_id" value={requestId} />
+        <input type="hidden" name="status" value="Approved" />
+        <textarea
+          name="admin_notes"
+          placeholder="Admin notes"
+          className="min-h-16 rounded-lg border bg-background px-3 py-2 text-sm"
+        />
+        <Button type="submit" size="sm">
+          Approve
+        </Button>
+      </form>
+      <form action={updateCleanerLeaveRequestStatus}>
+        <input type="hidden" name="leave_request_id" value={requestId} />
+        <input type="hidden" name="status" value="Rejected" />
+        <Button type="submit" size="sm" variant="outline" className="w-full">
+          Reject
+        </Button>
+      </form>
+    </div>
   );
 }
 
@@ -230,6 +372,20 @@ function normaliseDate(value: string | undefined) {
   }
 
   return new Date().toISOString().slice(0, 10);
+}
+
+function normaliseAvailabilityStatus(value: string | undefined) {
+  if (
+    value === "available" ||
+    value === "busy" ||
+    value === "leave" ||
+    value === "inactive" ||
+    value === "unavailable"
+  ) {
+    return value;
+  }
+
+  return null;
 }
 
 function sortBySchedule(a: BookingWithService, b: BookingWithService) {
