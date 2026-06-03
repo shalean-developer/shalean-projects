@@ -28,7 +28,7 @@ import {
   requireCustomer,
   requireUser,
 } from "@/lib/auth";
-import { getServiceBySlug, type ServiceConfig } from "@/config/services";
+import type { ServiceConfig, ServiceQuestion } from "@/config/services";
 import { bookingWizardSchema, type BookingWizardValues } from "@/lib/booking-schema";
 import { generateInvoiceForBooking, sendInvoiceAndLog, updateInvoiceStatus } from "@/lib/invoices";
 import { calculatePaymentAmount } from "@/lib/paystack";
@@ -38,7 +38,12 @@ import {
   cleanerFormSchema,
   type CleanerFormValues,
 } from "@/lib/cleaner-schema";
-import { calculateEstimatedTotal, getSelectedAddons } from "@/lib/pricing";
+import {
+  calculateBookingPricing,
+  calculateEstimatedTotal,
+  getSelectedAddons,
+  type PricingBreakdown,
+} from "@/lib/pricing";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { toSupabaseError } from "@/lib/supabase/errors";
@@ -46,7 +51,7 @@ import {
   getBookingById,
   getCleanerBookingById,
   getCustomerRecurringBookingById,
-  getDatabaseServiceByName,
+  getServiceConfigBySlug,
   getScheduleConflicts,
   getInvoiceById,
 } from "@/lib/supabase/queries";
@@ -69,7 +74,9 @@ import {
   bookingStatuses,
   recurringBookingStatuses,
   jobStatuses,
+  type BookingWithService,
   type BookingStatus,
+  type Cleaner,
   type JobStatus,
   type PaymentType,
   payrollStatuses,
@@ -105,6 +112,7 @@ type PendingBookingInput = {
   serviceData: Record<string, string | number>;
   selectedAddons: ReturnType<typeof getSelectedAddons>;
   estimatedTotal: number;
+  pricingBreakdown: PricingBreakdown;
   paymentType: PaymentType;
   cleanerSelectionType?: "auto" | "preferred";
   preferredCleaner?: {
@@ -124,20 +132,26 @@ export async function createBooking(values: BookingWizardValues) {
     throw new Error("Please complete all required booking details.");
   }
 
-  const service = getServiceBySlug(parsed.data.serviceSlug);
+  const service = await getServiceConfigBySlug(parsed.data.serviceSlug);
 
   if (!service) {
     throw new Error("Selected service is no longer available.");
   }
 
-  const databaseService = await getDatabaseServiceByName(service.name);
+  validateServiceInput(service, parsed.data.serviceData, parsed.data.selectedAddons);
   const selectedAddons = getSelectedAddons(service, parsed.data.selectedAddons);
   const bookingReference = createBookingReference();
   const account = await getOptionalCustomer();
   const recurringFrequency = getBookingRecurringFrequency(parsed.data);
+  const pricingBreakdown = calculateBookingPricing(
+    service,
+    parsed.data.selectedAddons,
+    parsed.data.serviceData
+  );
   const estimatedTotal = calculateEstimatedTotal(
     service,
-    parsed.data.selectedAddons
+    parsed.data.selectedAddons,
+    parsed.data.serviceData
   );
   const { totalAmount } = calculatePaymentAmount(
     estimatedTotal,
@@ -179,7 +193,7 @@ export async function createBooking(values: BookingWizardValues) {
       customerEmail: parsed.data.customerEmail,
       customerPhone: parsed.data.customerPhone,
       customerId: account.customer.id,
-      serviceId: databaseService.id,
+      serviceId: service.id,
       address: parsed.data.address,
       suburb: parsed.data.suburb,
       city: parsed.data.city,
@@ -190,6 +204,7 @@ export async function createBooking(values: BookingWizardValues) {
       serviceData: parsed.data.serviceData,
       selectedAddons,
       estimatedTotal,
+      pricingBreakdown,
       paymentType: parsed.data.paymentType,
       cleanerSelectionType,
       preferredCleaner,
@@ -233,7 +248,7 @@ export async function createBooking(values: BookingWizardValues) {
     customer_email: parsed.data.customerEmail,
     customer_phone: parsed.data.customerPhone,
     customer_id: account?.customer.id ?? null,
-    service_id: databaseService.id,
+    service_id: service.id,
     address: parsed.data.address,
     suburb: parsed.data.suburb,
     city: parsed.data.city,
@@ -252,6 +267,7 @@ export async function createBooking(values: BookingWizardValues) {
     service_data: {
       serviceSlug: service.slug,
       serviceName: service.name,
+      pricingBreakdown,
       cleanerSelectionType,
       ...preferredCleaner,
       questions: service.questions.map((question) => ({
@@ -329,17 +345,23 @@ export async function createRecurringBooking(values: RecurringBookingValues) {
     throw new Error("Please complete all required recurring plan details.");
   }
 
-  const service = getServiceBySlug(parsed.data.serviceSlug);
+  const service = await getServiceConfigBySlug(parsed.data.serviceSlug);
 
   if (!service) {
     throw new Error("Selected service is no longer available.");
   }
 
-  const databaseService = await getDatabaseServiceByName(service.name);
+  validateServiceInput(service, parsed.data.serviceData, parsed.data.selectedAddons);
   const selectedAddons = getSelectedAddons(service, parsed.data.selectedAddons);
+  const pricingBreakdown = calculateBookingPricing(
+    service,
+    parsed.data.selectedAddons,
+    parsed.data.serviceData
+  );
   const estimatedTotal = calculateEstimatedTotal(
     service,
-    parsed.data.selectedAddons
+    parsed.data.selectedAddons,
+    parsed.data.serviceData
   );
   const addressId =
     parsed.data.selectedAddressId ||
@@ -358,7 +380,7 @@ export async function createRecurringBooking(values: RecurringBookingValues) {
     customerEmail: customer.email,
     customerPhone: customer.phone ?? "",
     customerId: customer.id,
-    serviceId: databaseService.id,
+    serviceId: service.id,
     address: parsed.data.address,
     suburb: parsed.data.suburb,
     city: parsed.data.city,
@@ -369,6 +391,7 @@ export async function createRecurringBooking(values: RecurringBookingValues) {
     serviceData: parsed.data.serviceData,
     selectedAddons,
     estimatedTotal,
+    pricingBreakdown,
     paymentType: parsed.data.paymentType,
     recurringSetup: {
       frequency: parsed.data.frequency,
@@ -1386,6 +1409,210 @@ export async function updateSupportTicketStatus(formData: FormData) {
   }
 }
 
+export async function createPriceManagedService(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const payload = servicePayloadFromForm(formData);
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("services")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId: String(data.id),
+    changedBy: user.id,
+    changeType: "service_created",
+    snapshot: payload,
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+  revalidatePath("/");
+}
+
+export async function updatePriceManagedService(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const serviceId = getRequiredString(formData, "service_id");
+  const payload = servicePayloadFromForm(formData);
+
+  const { error } = await getSupabaseAdmin()
+    .from("services")
+    .update(payload)
+    .eq("id", serviceId);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId,
+    changedBy: user.id,
+    changeType: "service_updated",
+    snapshot: payload,
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+  revalidatePath("/");
+}
+
+export async function deletePriceManagedService(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const serviceId = getRequiredString(formData, "service_id");
+
+  const { error } = await getSupabaseAdmin()
+    .from("services")
+    .delete()
+    .eq("id", serviceId);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId,
+    changedBy: user.id,
+    changeType: "service_deleted",
+    snapshot: { serviceId },
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+  revalidatePath("/");
+}
+
+export async function upsertServiceAddon(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const serviceId = getRequiredString(formData, "service_id");
+  const addonKey = slugify(getRequiredString(formData, "addon_key"));
+  const addonId = getOptionalString(formData, "addon_id");
+  const payload = {
+    service_id: serviceId,
+    addon_key: addonKey,
+    label: getRequiredString(formData, "label"),
+    price: getNumber(formData, "price"),
+    active: formData.get("active") === "on",
+  };
+
+  const { error } = addonId
+    ? await getSupabaseAdmin()
+        .from("service_addons")
+        .update(payload)
+        .eq("id", addonId)
+    : await getSupabaseAdmin().from("service_addons").upsert(payload, {
+        onConflict: "service_id,addon_key",
+      });
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId,
+    changedBy: user.id,
+    changeType: addonId ? "addon_updated" : "addon_created",
+    snapshot: payload,
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+}
+
+export async function deleteServiceAddon(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const serviceId = getRequiredString(formData, "service_id");
+  const addonId = getRequiredString(formData, "addon_id");
+
+  const { error } = await getSupabaseAdmin()
+    .from("service_addons")
+    .delete()
+    .eq("id", addonId);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId,
+    changedBy: user.id,
+    changeType: "addon_deleted",
+    snapshot: { addonId },
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+}
+
+export async function upsertServicePricingRule(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const serviceId = getRequiredString(formData, "service_id");
+  const ruleId = getOptionalString(formData, "rule_id");
+  const adjustmentType =
+    formData.get("adjustment_type") === "percentage" ? "percentage" : "flat";
+  const payload = {
+    service_id: serviceId,
+    name: getRequiredString(formData, "name"),
+    rule_type: getRequiredString(formData, "rule_type"),
+    adjustment_type: adjustmentType,
+    adjustment_value: getNumber(formData, "adjustment_value"),
+    active: formData.get("active") === "on",
+    starts_at: getOptionalString(formData, "starts_at"),
+    ends_at: getOptionalString(formData, "ends_at"),
+    notes: getOptionalString(formData, "notes") ?? "",
+  };
+
+  const { error } = ruleId
+    ? await getSupabaseAdmin()
+        .from("service_pricing_rules")
+        .update(payload)
+        .eq("id", ruleId)
+    : await getSupabaseAdmin().from("service_pricing_rules").insert(payload);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId,
+    changedBy: user.id,
+    changeType: ruleId ? "pricing_rule_updated" : "pricing_rule_created",
+    snapshot: payload,
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+}
+
+export async function deleteServicePricingRule(formData: FormData) {
+  const user = await requireAdmin("/admin/pricing");
+  const serviceId = getRequiredString(formData, "service_id");
+  const ruleId = getRequiredString(formData, "rule_id");
+
+  const { error } = await getSupabaseAdmin()
+    .from("service_pricing_rules")
+    .delete()
+    .eq("id", ruleId);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  await logPricingHistory({
+    serviceId,
+    changedBy: user.id,
+    changeType: "pricing_rule_deleted",
+    snapshot: { ruleId },
+  });
+
+  revalidatePath("/admin/pricing");
+  revalidatePath("/book");
+}
+
 export async function upsertPayrollRecord(formData: FormData) {
   await requireAdmin("/admin/payroll");
   const cleanerId = getRequiredString(formData, "cleaner_id");
@@ -1405,9 +1632,7 @@ export async function upsertPayrollRecord(formData: FormData) {
   };
 
   const { error } = bookingId
-    ? await getSupabaseAdmin()
-        .from("payroll_records")
-        .upsert(payload, { onConflict: "booking_id,cleaner_id" })
+    ? await savePayrollRecordForBooking(payload, bookingId, cleanerId)
     : await getSupabaseAdmin().from("payroll_records").insert(payload);
 
   if (error) {
@@ -1415,6 +1640,7 @@ export async function upsertPayrollRecord(formData: FormData) {
   }
 
   revalidatePath("/admin/payroll");
+  revalidatePath("/admin/earnings");
   revalidatePath("/cleaner/earnings");
 }
 
@@ -1435,8 +1661,83 @@ export async function updatePayrollStatus(formData: FormData) {
     throw toSupabaseError(error);
   }
 
+  const { data: payroll } = await getSupabaseAdmin()
+    .from("payroll_records")
+    .select("booking_id, cleaner_id")
+    .eq("id", payrollId)
+    .maybeSingle();
+
+  if (payroll?.booking_id && payroll.cleaner_id) {
+    await getSupabaseAdmin()
+      .from("cleaner_earnings")
+      .update({ status })
+      .eq("booking_id", payroll.booking_id)
+      .eq("cleaner_id", payroll.cleaner_id);
+  }
+
   revalidatePath("/admin/payroll");
+  revalidatePath("/admin/earnings");
   revalidatePath("/cleaner/earnings");
+}
+
+async function savePayrollRecordForBooking(
+  payload: Record<string, unknown>,
+  bookingId: string,
+  cleanerId: string
+) {
+  const supabase = getSupabaseAdmin();
+  const { data: existing, error: existingError } = await supabase
+    .from("payroll_records")
+    .select("id")
+    .eq("booking_id", bookingId)
+    .eq("cleaner_id", cleanerId)
+    .maybeSingle();
+
+  if (existingError) {
+    return { error: existingError };
+  }
+
+  if (existing?.id) {
+    const { error } = await supabase
+      .from("payroll_records")
+      .update(payload)
+      .eq("id", existing.id);
+
+    return { error };
+  }
+
+  const { error } = await supabase.from("payroll_records").insert(payload);
+  return { error };
+}
+
+async function saveCleanerEarningForBooking(
+  payload: Record<string, unknown>,
+  bookingId: string,
+  cleanerId: string
+) {
+  const supabase = getSupabaseAdmin();
+  const { data: existing, error: existingError } = await supabase
+    .from("cleaner_earnings")
+    .select("id")
+    .eq("booking_id", bookingId)
+    .eq("cleaner_id", cleanerId)
+    .maybeSingle();
+
+  if (existingError) {
+    return { error: existingError };
+  }
+
+  if (existing?.id) {
+    const { error } = await supabase
+      .from("cleaner_earnings")
+      .update(payload)
+      .eq("id", existing.id);
+
+    return { error };
+  }
+
+  const { error } = await supabase.from("cleaner_earnings").insert(payload);
+  return { error };
 }
 
 export async function updatePlatformSetting(formData: FormData) {
@@ -1544,6 +1845,7 @@ async function createPendingBookingForPayment({
   serviceData,
   selectedAddons,
   estimatedTotal,
+  pricingBreakdown,
   paymentType,
   cleanerSelectionType = "auto",
   preferredCleaner = {
@@ -1573,6 +1875,7 @@ async function createPendingBookingForPayment({
       service_data: {
         serviceSlug: service.slug,
         serviceName: service.name,
+        pricingBreakdown,
         cleanerSelectionType,
         ...preferredCleaner,
         ...(recurringSetup ? { recurringSetup } : {}),
@@ -1728,6 +2031,62 @@ function getOptionalString(formData: FormData, key: string) {
   return value.trim();
 }
 
+function validateServiceInput(
+  service: ServiceConfig,
+  serviceData: Record<string, string | number>,
+  selectedAddonIds: string[]
+) {
+  for (const question of service.questions) {
+    validateServiceQuestion(question, serviceData[question.id]);
+  }
+
+  const activeAddonIds = new Set(
+    service.addons
+      .filter((addon) => addon.active !== false)
+      .map((addon) => addon.id)
+  );
+
+  for (const addonId of selectedAddonIds) {
+    if (!activeAddonIds.has(addonId)) {
+      throw new Error("One or more selected add-ons are no longer available.");
+    }
+  }
+}
+
+function validateServiceQuestion(
+  question: ServiceQuestion,
+  value: string | number | undefined
+) {
+  const empty =
+    value === undefined ||
+    value === null ||
+    (typeof value === "string" && !value.trim());
+
+  if (question.required && empty) {
+    throw new Error(`${question.label} is required.`);
+  }
+
+  if (empty) {
+    return;
+  }
+
+  if (question.type === "number") {
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue) || numericValue < 0) {
+      throw new Error(`${question.label} must be a valid number.`);
+    }
+  }
+
+  if (
+    question.type === "select" &&
+    question.options?.length &&
+    !question.options.includes(String(value))
+  ) {
+    throw new Error(`Choose a valid option for ${question.label}.`);
+  }
+}
+
 function getNumber(formData: FormData, key: string) {
   const value = Number(formData.get(key) ?? 0);
 
@@ -1738,11 +2097,97 @@ function getNumber(formData: FormData, key: string) {
   return value;
 }
 
+function servicePayloadFromForm(formData: FormData) {
+  const name = getRequiredString(formData, "name");
+  const serviceFeeType =
+    formData.get("service_fee_type") === "percentage" ? "percentage" : "flat";
+
+  return {
+    name,
+    slug: slugify(getOptionalString(formData, "slug") ?? name),
+    short_description: getOptionalString(formData, "short_description") ?? "",
+    description: getOptionalString(formData, "description") ?? "",
+    base_price: getNumber(formData, "base_price"),
+    room_price: getNumber(formData, "room_price"),
+    bathroom_price: getNumber(formData, "bathroom_price"),
+    service_fee_type: serviceFeeType,
+    service_fee_amount: getNumber(formData, "service_fee_amount"),
+    duration_minutes: Math.max(0, Math.round(getNumber(formData, "duration_minutes"))),
+    active: formData.get("active") === "on",
+    question_schema: parseJsonArray(formData, "question_schema"),
+    benefits: parseLineList(formData, "benefits"),
+    included: parseLineList(formData, "included"),
+    pricing_rule_notes: getOptionalString(formData, "pricing_rule_notes") ?? "",
+  };
+}
+
+function parseLineList(formData: FormData, key: string) {
+  const value = getOptionalString(formData, key) ?? "";
+
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseJsonArray(formData: FormData, key: string) {
+  const raw = getOptionalString(formData, key);
+
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      throw new Error("Value must be an array.");
+    }
+
+    return parsed;
+  } catch {
+    throw new Error(`${key} must be valid JSON array.`);
+  }
+}
+
+async function logPricingHistory({
+  serviceId,
+  changedBy,
+  changeType,
+  snapshot,
+}: {
+  serviceId: string | null;
+  changedBy: string;
+  changeType: string;
+  snapshot: Record<string, unknown>;
+}) {
+  const { error } = await getSupabaseAdmin().from("pricing_history").insert({
+    service_id: serviceId,
+    changed_by: changedBy,
+    change_type: changeType,
+    snapshot,
+  });
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function toCleanerPayload(values: CleanerFormValues) {
   return {
     full_name: values.fullName,
     email: values.email,
     phone: values.phone,
+    role: values.role,
+    started_at: values.startedAt,
     profile_photo: values.profilePhoto || null,
     bio: values.bio || null,
     specialties: values.specialties,
@@ -1765,62 +2210,139 @@ async function ensureEarningsForCompletedBooking(bookingId: string) {
     return;
   }
 
-  const settings = await getSupabaseAdmin()
-    .from("platform_settings")
-    .select("setting_value")
-    .eq("setting_key", "payroll")
-    .maybeSingle();
-  const configuredPercentage =
-    settings.data?.setting_value &&
-    typeof settings.data.setting_value === "object" &&
-    "defaultCleanerPercentage" in settings.data.setting_value
-      ? Number(
-          (settings.data.setting_value as Record<string, unknown>)
-            .defaultCleanerPercentage
-        )
-      : 65;
-  const cleanerPercentage = Number.isFinite(configuredPercentage)
-    ? configuredPercentage
-    : 65;
-  const grossAmount = booking.total_amount;
-  const netAmount = Math.round(grossAmount * cleanerPercentage) / 100;
-  const platformFee = Math.max(grossAmount - netAmount, 0);
+  const cleaner = booking.assigned_cleaner;
 
-  const { error: earningError } = await getSupabaseAdmin()
-    .from("cleaner_earnings")
-    .upsert(
-      {
-        cleaner_id: booking.assigned_cleaner_id,
-        booking_id: booking.id,
-        gross_amount: grossAmount,
-        platform_fee: platformFee,
-        net_amount: netAmount,
-        status: "Pending",
-      },
-      { onConflict: "booking_id,cleaner_id" }
-    );
+  if (!cleaner) {
+    return;
+  }
+
+  const earning = calculateCleanerEarningForBooking(booking, cleaner);
+
+  const { error: earningError } = await saveCleanerEarningForBooking(
+    {
+      cleaner_id: booking.assigned_cleaner_id,
+      booking_id: booking.id,
+      gross_amount: earning.bookingAmount,
+      platform_fee: earning.serviceFee,
+      booking_amount: earning.bookingAmount,
+      service_fee: earning.serviceFee,
+      net_booking_value: earning.netBookingValue,
+      cleaner_percentage: earning.cleanerPercentage,
+      cleaner_role: earning.cleanerRole,
+      tenure_months: earning.tenureMonths,
+      calculation_details: earning.calculationDetails,
+      net_amount: earning.finalPayout,
+      status: "Pending",
+    },
+    booking.id,
+    booking.assigned_cleaner_id
+  );
 
   if (earningError) {
     throw toSupabaseError(earningError);
   }
 
-  const { error: payrollError } = await getSupabaseAdmin()
-    .from("payroll_records")
-    .upsert(
-      {
-        cleaner_id: booking.assigned_cleaner_id,
-        booking_id: booking.id,
-        amount: netAmount,
-        bonus: 0,
-        deduction: 0,
-        status: "Pending",
-      },
-      { onConflict: "booking_id,cleaner_id" }
-    );
+  const { error: payrollError } = await savePayrollRecordForBooking(
+    {
+      cleaner_id: booking.assigned_cleaner_id,
+      booking_id: booking.id,
+      amount: earning.finalPayout,
+      bonus: 0,
+      deduction: 0,
+      status: "Pending",
+    },
+    booking.id,
+    booking.assigned_cleaner_id
+  );
 
   if (payrollError) {
     throw toSupabaseError(payrollError);
   }
+}
+
+function calculateCleanerEarningForBooking(
+  booking: BookingWithService,
+  cleaner: Cleaner
+) {
+  const bookingAmount = roundMoney(booking.total_amount || booking.estimated_price);
+  const serviceFee = roundMoney(
+    booking.service_data.pricingBreakdown?.serviceFee ?? 0
+  );
+  const netBookingValue = roundMoney(Math.max(bookingAmount - serviceFee, 0));
+  const cleanerRole = cleaner?.role === "Team Leader" ? "Team Leader" : "Cleaner";
+  const tenureMonths = getCleanerTenureMonths(cleaner?.started_at ?? cleaner?.created_at);
+  const fixedRateServices = new Set([
+    "Deep Cleaning",
+    "Moving Cleaning",
+    "Carpet Cleaning",
+  ]);
+
+  if (fixedRateServices.has(booking.service_name)) {
+    const finalPayout = cleanerRole === "Team Leader" ? 270 : 250;
+
+    return {
+      bookingAmount,
+      serviceFee,
+      netBookingValue,
+      cleanerPercentage: null,
+      cleanerRole,
+      tenureMonths,
+      finalPayout,
+      calculationDetails: {
+        rule: "fixed_service_rate",
+        serviceName: booking.service_name,
+        roleRate: finalPayout,
+      },
+    };
+  }
+
+  const cleanerPercentage = tenureMonths >= 4 ? 70 : 60;
+  const calculated = roundMoney(netBookingValue * (cleanerPercentage / 100));
+  const finalPayout = Math.min(Math.max(calculated, 250), 300);
+
+  return {
+    bookingAmount,
+    serviceFee,
+    netBookingValue,
+    cleanerPercentage,
+    cleanerRole,
+    tenureMonths,
+    finalPayout,
+    calculationDetails: {
+      rule: "tenure_percentage_with_floor_and_cap",
+      calculated,
+      minimumPayout: 250,
+      maximumPayout: 300,
+    },
+  };
+}
+
+function getCleanerTenureMonths(startedAt: string | null | undefined) {
+  if (!startedAt) {
+    return 0;
+  }
+
+  const started = new Date(startedAt);
+
+  if (Number.isNaN(started.getTime())) {
+    return 0;
+  }
+
+  const now = new Date();
+  let months =
+    (now.getFullYear() - started.getFullYear()) * 12 +
+    now.getMonth() -
+    started.getMonth();
+
+  if (now.getDate() < started.getDate()) {
+    months -= 1;
+  }
+
+  return Math.max(months, 0);
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 async function getSupportTicketIdentity(ticketId: string): Promise<{

@@ -267,7 +267,11 @@ export function BookingForm({
     ? getSelectedAddons(selectedService, values.selectedAddons)
     : [];
   const estimatedTotal = selectedService
-    ? calculateEstimatedTotal(selectedService, values.selectedAddons)
+    ? calculateEstimatedTotal(
+        selectedService,
+        values.selectedAddons,
+        values.serviceData
+      )
     : 0;
   const paymentSummary = getPaymentSummary(estimatedTotal, values.paymentType);
   const recurringFrequency = normalizeRecurringFrequency(
@@ -589,7 +593,9 @@ export function BookingForm({
               </GroupedPanel>
               <GroupedPanel title="Add-ons">
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {selectedService.addons.map((addon) => {
+                  {selectedService.addons
+                    .filter((addon) => addon.active !== false)
+                    .map((addon) => {
                     const checked = values.selectedAddons.includes(addon.id);
 
                     return (

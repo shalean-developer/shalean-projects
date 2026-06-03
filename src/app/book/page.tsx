@@ -3,10 +3,13 @@ import Link from "next/link";
 import { BookingForm } from "@/components/booking/booking-form";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { services } from "@/config/services";
 import { getOptionalCustomer } from "@/lib/auth";
 import { hasSupabaseConfig } from "@/lib/supabase/admin";
-import { getCleaners, getCustomerAddresses } from "@/lib/supabase/queries";
+import {
+  getCleaners,
+  getCustomerAddresses,
+  getServiceConfigs,
+} from "@/lib/supabase/queries";
 import { getPaymentSchemaStatus } from "@/lib/supabase/schema";
 
 export const dynamic = "force-dynamic";
@@ -30,9 +33,10 @@ export default async function BookPage({ searchParams }: BookPageProps) {
   const params = await searchParams;
   const initialServiceSlug = getSearchParam(params.service);
   const initialStepSlug = getSearchParam(params.step);
-  const [addresses, cleaners] = await Promise.all([
+  const [addresses, cleaners, services] = await Promise.all([
     account ? getCustomerAddresses(account.customer.id) : Promise.resolve([]),
     getCleaners(),
+    getServiceConfigs(),
   ]);
 
   return (

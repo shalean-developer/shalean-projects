@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { getServiceBySlug } from "@/config/services";
 import {
   formatPreferredDays,
   recurringDays,
@@ -36,17 +35,6 @@ export const recurringBookingSchema = z
     }),
   })
   .superRefine((values, ctx) => {
-    const service = getServiceBySlug(values.serviceSlug);
-
-    if (!service) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["serviceSlug"],
-        message: "Choose a valid cleaning service.",
-      });
-      return;
-    }
-
     if (values.frequency === "Weekly" && !values.preferredDays.length) {
       ctx.addIssue({
         code: "custom",
@@ -55,52 +43,12 @@ export const recurringBookingSchema = z
       });
     }
 
-    for (const question of service.questions) {
-      const value = values.serviceData[question.id];
-      const empty =
-        value === undefined ||
-        value === null ||
-        (typeof value === "string" && !value.trim());
-
-      if (question.required && empty) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["serviceData", question.id],
-          message: `${question.label} is required.`,
-        });
-      }
-
-      if (question.type === "number" && !empty) {
-        const numericValue = Number(value);
-        if (!Number.isFinite(numericValue) || numericValue < 0) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["serviceData", question.id],
-            message: `${question.label} must be a valid number.`,
-          });
-        }
-      }
-
-      if (question.type === "select" && !empty && question.options) {
-        if (!question.options.includes(String(value))) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["serviceData", question.id],
-            message: `Choose a valid option for ${question.label}.`,
-          });
-        }
-      }
-    }
-
-    const validAddonIds = new Set(service.addons.map((addon) => addon.id));
-    for (const addonId of values.selectedAddons) {
-      if (!validAddonIds.has(addonId)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["selectedAddons"],
-          message: "One or more add-ons are not available for this service.",
-        });
-      }
+    if (values.selectedAddons.some((addonId) => !addonId.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["selectedAddons"],
+        message: "One or more add-ons are not valid.",
+      });
     }
   });
 

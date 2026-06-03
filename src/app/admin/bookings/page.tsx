@@ -14,11 +14,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { services } from "@/config/services";
+import type { ServiceConfig } from "@/config/services";
 import { formatRand } from "@/lib/pricing";
 import { hasSupabaseConfig } from "@/lib/supabase/admin";
 import { isSupabaseSchemaMissingError } from "@/lib/supabase/errors";
-import { getBookings, getCleaners } from "@/lib/supabase/queries";
+import { getBookings, getCleaners, getServiceConfigs } from "@/lib/supabase/queries";
 import {
   bookingStatuses,
   jobStatuses,
@@ -88,6 +88,7 @@ export default async function AdminBookingsPage({
                 query={params.q}
                 sort={params.sort}
                 cleaners={setupData.cleaners}
+                services={setupData.services}
               />
             </div>
           </CardHeader>
@@ -245,6 +246,7 @@ function Filters({
   query,
   sort,
   cleaners,
+  services,
 }: {
   service?: string;
   status?: string;
@@ -254,6 +256,7 @@ function Filters({
   query?: string;
   sort?: string;
   cleaners: Cleaner[];
+  services: ServiceConfig[];
 }) {
   return (
     <form
@@ -476,9 +479,13 @@ function formatBookingDateTime(date: string, time: string) {
 
 async function getBookingsDataOrSetupNotice() {
   try {
-    const [bookings, cleaners] = await Promise.all([getBookings(), getCleaners()]);
+    const [bookings, cleaners, services] = await Promise.all([
+      getBookings(),
+      getCleaners(),
+      getServiceConfigs({ includeInactive: true }),
+    ]);
 
-    return { bookings, cleaners };
+    return { bookings, cleaners, services };
   } catch (error) {
     if (isSupabaseSchemaMissingError(error)) {
       return null;

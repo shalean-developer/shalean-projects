@@ -11,6 +11,7 @@ import {
   Settings,
   Sparkles,
   Star,
+  Tags,
   Users,
   Wallet,
   Workflow,
@@ -33,6 +34,8 @@ const adminNavItems = [
   { href: "/admin/reviews", label: "Reviews", icon: Star },
   { href: "/admin/support", label: "Support", icon: Headphones },
   { href: "/admin/reports", label: "Reports", icon: BarChart3 },
+  { href: "/admin/pricing", label: "Pricing", icon: Tags },
+  { href: "/admin/earnings", label: "Earnings", icon: Wallet },
   { href: "/admin/payroll", label: "Payroll", icon: Wallet },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];

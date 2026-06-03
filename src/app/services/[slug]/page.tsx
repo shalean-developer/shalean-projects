@@ -5,13 +5,24 @@ import { notFound } from "next/navigation";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { services, getServiceBySlug } from "@/config/services";
 import { formatRand } from "@/lib/pricing";
+import {
+  getServiceConfigBySlug,
+  getServiceConfigs,
+} from "@/lib/supabase/queries";
 
-export function generateStaticParams() {
-  return services.map((service) => ({
-    slug: service.slug,
-  }));
+export const dynamic = "force-dynamic";
+
+export async function generateStaticParams() {
+  try {
+    const services = await getServiceConfigs();
+
+    return services.map((service) => ({
+      slug: service.slug,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function generateMetadata({
@@ -20,7 +31,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const service = getServiceBySlug(slug);
+  const service = await getServiceConfigBySlug(slug);
 
   if (!service) {
     return {
@@ -40,7 +51,7 @@ export default async function ServicePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const service = getServiceBySlug(slug);
+  const service = await getServiceConfigBySlug(slug);
 
   if (!service) {
     notFound();

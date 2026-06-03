@@ -81,7 +81,11 @@ export function RecurringPlanForm({
     ? getSelectedAddons(selectedService, values.selectedAddons)
     : [];
   const estimatedTotal = selectedService
-    ? calculateEstimatedTotal(selectedService, values.selectedAddons)
+    ? calculateEstimatedTotal(
+        selectedService,
+        values.selectedAddons,
+        values.serviceData
+      )
     : 0;
 
   function chooseService(service: ServiceConfig) {
@@ -197,7 +201,9 @@ export function RecurringPlanForm({
               <CardTitle>Add-ons</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
-              {selectedService.addons.map((addon) => {
+              {selectedService.addons
+                .filter((addon) => addon.active !== false)
+                .map((addon) => {
                 const checked = values.selectedAddons.includes(addon.id);
 
                 return (

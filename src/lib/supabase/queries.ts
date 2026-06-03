@@ -1,6 +1,13 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
 import type {
+  ServiceConfig,
+  ServiceFeeType,
+  ServicePricingRule,
+  ServiceQuestion,
+  ServiceQuestionType,
+} from "@/config/services";
+import type {
   BookingAddonData,
   BookingRequest,
   BookingServiceData,
@@ -26,6 +33,7 @@ import type {
   PayrollRecord,
   PayrollStatus,
   PlatformSetting,
+  PricingHistory,
   RecurringBooking,
   RecurringBookingStatus,
   RecurringFrequency,
@@ -43,7 +51,7 @@ import type {
 } from "@/lib/types";
 
 const bookingSelect =
-  "id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)";
+  "id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)";
 
 const recurringBookingSelect =
   "id, customer_id, service_id, address_id, frequency, preferred_day, preferred_time, service_data, selected_addons, estimated_price, status, next_booking_date, created_at, services(name), customer_addresses(id, customer_id, label, address, suburb, city, access_instructions, gate_code, parking_instructions, is_default, created_at), customers(id, user_id, full_name, email, phone, created_at)";
@@ -58,16 +66,19 @@ const supportTicketSelect =
   `id, customer_id, booking_id, subject, message, status, priority, assigned_admin_id, created_at, updated_at, customers(id, user_id, full_name, email, phone, created_at), bookings(${bookingSelect}), support_messages(id, ticket_id, sender_id, sender_role, message, created_at)`;
 
 const payrollRecordSelect =
-  `id, cleaner_id, booking_id, amount, bonus, deduction, status, paid_at, created_at, cleaners(id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), bookings(${bookingSelect})`;
+  `id, cleaner_id, booking_id, amount, bonus, deduction, status, paid_at, created_at, cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), bookings(${bookingSelect})`;
 
 const cleanerEarningSelect =
-  `id, cleaner_id, booking_id, gross_amount, platform_fee, net_amount, status, created_at, cleaners(id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), bookings(${bookingSelect})`;
+  `id, cleaner_id, booking_id, gross_amount, platform_fee, booking_amount, service_fee, net_booking_value, cleaner_percentage, cleaner_role, tenure_months, calculation_details, net_amount, status, created_at, cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), bookings(${bookingSelect})`;
+
+const serviceConfigSelect =
+  "id, slug, name, short_description, description, base_price, room_price, bathroom_price, service_fee_type, service_fee_amount, duration_minutes, active, question_schema, benefits, included, pricing_rule_notes, created_at, updated_at, service_addons(id, addon_key, label, price, active), service_pricing_rules(id, name, rule_type, adjustment_type, adjustment_value, active, starts_at, ends_at, notes)";
 
 export async function getActiveServices(): Promise<CleaningService[]> {
   const { data, error } = await getSupabaseAdmin()
     .from("services")
     .select(
-      "id, name, description, base_price, duration_minutes, active, created_at"
+      "id, slug, name, short_description, description, base_price, room_price, bathroom_price, service_fee_type, service_fee_amount, duration_minutes, active, created_at, updated_at"
     )
     .eq("active", true)
     .order("base_price", { ascending: true });
@@ -79,13 +90,94 @@ export async function getActiveServices(): Promise<CleaningService[]> {
   return (data ?? []).map((service) => ({
     ...service,
     base_price: Number(service.base_price),
+    room_price: Number(service.room_price ?? 0),
+    bathroom_price: Number(service.bathroom_price ?? 0),
+    service_fee_amount: Number(service.service_fee_amount ?? 0),
   })) as CleaningService[];
+}
+
+export async function getServiceConfigs({
+  includeInactive = false,
+}: {
+  includeInactive?: boolean;
+} = {}): Promise<ServiceConfig[]> {
+  let query = getSupabaseAdmin()
+    .from("services")
+    .select(serviceConfigSelect)
+    .order("active", { ascending: false })
+    .order("name", { ascending: true });
+
+  if (!includeInactive) {
+    query = query.eq("active", true);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return (data ?? []).map(mapServiceConfig);
+}
+
+export async function getServiceConfigBySlug(
+  slug: string,
+  {
+    includeInactive = false,
+  }: {
+    includeInactive?: boolean;
+  } = {}
+): Promise<ServiceConfig | null> {
+  let query = getSupabaseAdmin()
+    .from("services")
+    .select(serviceConfigSelect)
+    .eq("slug", slug);
+
+  if (!includeInactive) {
+    query = query.eq("active", true);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return data ? mapServiceConfig(data) : null;
+}
+
+export async function getPricingHistory(
+  limit = 80
+): Promise<PricingHistory[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("pricing_history")
+    .select("id, service_id, changed_by, change_type, snapshot, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return (data ?? []).map((history) => ({
+    id: String(history.id ?? ""),
+    service_id: typeof history.service_id === "string" ? history.service_id : null,
+    changed_by: typeof history.changed_by === "string" ? history.changed_by : null,
+    change_type: String(history.change_type ?? ""),
+    snapshot:
+      history.snapshot &&
+      typeof history.snapshot === "object" &&
+      !Array.isArray(history.snapshot)
+        ? (history.snapshot as Record<string, unknown>)
+        : {},
+    created_at: String(history.created_at ?? ""),
+  }));
 }
 
 export async function getDatabaseServiceByName(serviceName: string) {
   const { data, error } = await getSupabaseAdmin()
     .from("services")
-    .select("id, name, base_price, active")
+    .select("id, slug, name, base_price, active")
     .eq("name", serviceName)
     .eq("active", true)
     .single();
@@ -483,7 +575,7 @@ export async function getCleaners(): Promise<Cleaner[]> {
   const { data, error } = await getSupabaseAdmin()
     .from("cleaners")
     .select(
-      "id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
+      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
     )
     .order("full_name", { ascending: true });
 
@@ -500,7 +592,7 @@ export async function getCleanerById(
   const { data, error } = await getSupabaseAdmin()
     .from("cleaners")
     .select(
-      "id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
+      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
     )
     .eq("id", cleanerId)
     .single();
@@ -526,7 +618,7 @@ export async function getCleanerByUserIdOrEmail(
   let query = getSupabaseAdmin()
     .from("cleaners")
     .select(
-      "id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
+      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
     );
 
   if (email) {
@@ -579,7 +671,7 @@ export async function getMatchingAvailableCleaners(
   const { data: cleaners, error: cleanersError } = await getSupabaseAdmin()
     .from("cleaners")
     .select(
-      "id, user_id, full_name, email, phone, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
+      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
     )
     .eq("active", true)
     .order("full_name", { ascending: true });
@@ -957,6 +1049,75 @@ function mapBookingWithService(
     } as BookingWithService;
 }
 
+function mapServiceConfig(
+  service: Record<string, unknown> & {
+    service_addons?: Record<string, unknown>[] | Record<string, unknown> | null;
+    service_pricing_rules?:
+      | Record<string, unknown>[]
+      | Record<string, unknown>
+      | null;
+  }
+): ServiceConfig {
+  const addons = Array.isArray(service.service_addons)
+    ? service.service_addons
+    : service.service_addons && typeof service.service_addons === "object"
+      ? [service.service_addons]
+      : [];
+  const pricingRules = Array.isArray(service.service_pricing_rules)
+    ? service.service_pricing_rules
+    : service.service_pricing_rules &&
+        typeof service.service_pricing_rules === "object"
+      ? [service.service_pricing_rules]
+      : [];
+
+  return {
+    id: String(service.id ?? ""),
+    slug: String(service.slug ?? ""),
+    name: String(service.name ?? ""),
+    shortDescription: String(service.short_description ?? ""),
+    description: String(service.description ?? ""),
+    basePrice: Number(service.base_price ?? 0),
+    roomPrice: Number(service.room_price ?? 0),
+    bathroomPrice: Number(service.bathroom_price ?? 0),
+    serviceFeeType: normaliseServiceFeeType(service.service_fee_type),
+    serviceFeeAmount: Number(service.service_fee_amount ?? 0),
+    durationMinutes: Number(service.duration_minutes ?? 0),
+    active: Boolean(service.active),
+    questions: normaliseServiceQuestions(service.question_schema),
+    addons: addons
+      .map((addon) => ({
+        id: String(addon.addon_key ?? addon.id ?? ""),
+        dbId: String(addon.id ?? ""),
+        label: String(addon.label ?? ""),
+        price: Number(addon.price ?? 0),
+        active: Boolean(addon.active),
+      })),
+    pricingRules: pricingRules.map(mapServicePricingRule),
+    benefits: normaliseStringList(service.benefits),
+    included: normaliseStringList(service.included),
+    pricingRuleNotes: String(service.pricing_rule_notes ?? ""),
+    createdAt: String(service.created_at ?? ""),
+    updatedAt: String(service.updated_at ?? service.created_at ?? ""),
+  };
+}
+
+function mapServicePricingRule(
+  rule: Record<string, unknown>
+): ServicePricingRule {
+  return {
+    id: String(rule.id ?? ""),
+    name: String(rule.name ?? ""),
+    ruleType: String(rule.rule_type ?? "manual"),
+    adjustmentType:
+      rule.adjustment_type === "percentage" ? "percentage" : "flat",
+    adjustmentValue: Number(rule.adjustment_value ?? 0),
+    active: Boolean(rule.active),
+    startsAt: typeof rule.starts_at === "string" ? rule.starts_at : null,
+    endsAt: typeof rule.ends_at === "string" ? rule.ends_at : null,
+    notes: String(rule.notes ?? ""),
+  };
+}
+
 function mapBookingRequest(
   request: Record<string, unknown> & {
     bookings?: Record<string, unknown> | Record<string, unknown>[] | null;
@@ -1201,6 +1362,9 @@ function mapCleaner(cleaner: Record<string, unknown>): Cleaner {
     full_name: String(cleaner.full_name ?? ""),
     email: String(cleaner.email ?? ""),
     phone: String(cleaner.phone ?? ""),
+    role: cleaner.role === "Team Leader" ? "Team Leader" : "Cleaner",
+    started_at:
+      typeof cleaner.started_at === "string" ? cleaner.started_at : null,
     profile_photo:
       typeof cleaner.profile_photo === "string" && cleaner.profile_photo
         ? cleaner.profile_photo
@@ -1449,6 +1613,25 @@ function mapCleanerEarning(
     booking_id: typeof earning.booking_id === "string" ? earning.booking_id : null,
     gross_amount: Number(earning.gross_amount ?? 0),
     platform_fee: Number(earning.platform_fee ?? 0),
+    booking_amount: Number(earning.booking_amount ?? earning.gross_amount ?? 0),
+    service_fee: Number(earning.service_fee ?? earning.platform_fee ?? 0),
+    net_booking_value: Number(
+      earning.net_booking_value ??
+        Math.max(Number(earning.gross_amount ?? 0) - Number(earning.platform_fee ?? 0), 0)
+    ),
+    cleaner_percentage:
+      earning.cleaner_percentage === null || earning.cleaner_percentage === undefined
+        ? null
+        : Number(earning.cleaner_percentage),
+    cleaner_role:
+      earning.cleaner_role === "Team Leader" ? "Team Leader" : "Cleaner",
+    tenure_months: Number(earning.tenure_months ?? 0),
+    calculation_details:
+      earning.calculation_details &&
+      typeof earning.calculation_details === "object" &&
+      !Array.isArray(earning.calculation_details)
+        ? (earning.calculation_details as Record<string, unknown>)
+        : {},
     net_amount: Number(earning.net_amount ?? 0),
     status: normalisePayrollStatus(earning.status),
     created_at: String(earning.created_at ?? ""),
@@ -1553,6 +1736,7 @@ function normaliseServiceData(value: unknown): BookingServiceData {
     return {
       serviceSlug: String(data.serviceSlug ?? ""),
       serviceName: String(data.serviceName ?? "Unknown service"),
+      pricingBreakdown: normalisePricingBreakdown(data.pricingBreakdown),
       cleanerSelectionType:
         data.cleanerSelectionType === "preferred" ? "preferred" : "auto",
       preferredCleanerId:
@@ -1580,6 +1764,7 @@ function normaliseServiceData(value: unknown): BookingServiceData {
   return {
     serviceSlug: "",
     serviceName: "Unknown service",
+    pricingBreakdown: undefined,
     cleanerSelectionType: "auto",
     preferredCleanerId: "",
     preferredCleanerName: "",
@@ -1628,4 +1813,73 @@ function normaliseAddonData(value: unknown): BookingAddonData[] {
     label: String(addon.label),
     price: Number(addon.price ?? 0),
   }));
+}
+
+function normalisePricingBreakdown(
+  value: unknown
+): BookingServiceData["pricingBreakdown"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const breakdown = value as Record<string, unknown>;
+
+  return {
+    basePrice: Number(breakdown.basePrice ?? 0),
+    roomCount: Number(breakdown.roomCount ?? 0),
+    roomTotal: Number(breakdown.roomTotal ?? 0),
+    bathroomCount: Number(breakdown.bathroomCount ?? 0),
+    bathroomTotal: Number(breakdown.bathroomTotal ?? 0),
+    addonTotal: Number(breakdown.addonTotal ?? 0),
+    specialPricingTotal: Number(breakdown.specialPricingTotal ?? 0),
+    subtotal: Number(breakdown.subtotal ?? 0),
+    serviceFee: Number(breakdown.serviceFee ?? 0),
+    total: Number(breakdown.total ?? 0),
+  };
+}
+
+function normaliseServiceFeeType(value: unknown): ServiceFeeType {
+  return value === "percentage" ? "percentage" : "flat";
+}
+
+function normaliseStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(String).filter((item) => item.trim().length > 0)
+    : [];
+}
+
+function normaliseServiceQuestions(value: unknown): ServiceQuestion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((question) => {
+    const item =
+      question && typeof question === "object"
+        ? (question as Record<string, unknown>)
+        : {};
+
+    return {
+      id: String(item.id ?? ""),
+      label: String(item.label ?? ""),
+      type: normaliseServiceQuestionType(item.type),
+      required: Boolean(item.required),
+      placeholder:
+        typeof item.placeholder === "string" ? item.placeholder : undefined,
+      options: Array.isArray(item.options) ? item.options.map(String) : undefined,
+    };
+  });
+}
+
+function normaliseServiceQuestionType(value: unknown): ServiceQuestionType {
+  if (
+    value === "number" ||
+    value === "time" ||
+    value === "select" ||
+    value === "textarea"
+  ) {
+    return value;
+  }
+
+  return "text";
 }

@@ -5,13 +5,13 @@ import { RecurringPlanForm } from "@/components/account/recurring-plan-form";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { services } from "@/config/services";
 import { requireCustomer } from "@/lib/auth";
 import { formatRand } from "@/lib/pricing";
 import { getV15SchemaStatus } from "@/lib/supabase/schema";
 import {
   getCustomerAddresses,
   getCustomerRecurringBookings,
+  getServiceConfigs,
 } from "@/lib/supabase/queries";
 import type { RecurringBooking, RecurringBookingStatus } from "@/lib/types";
 
@@ -25,9 +25,10 @@ export default async function AccountRecurringPage() {
     return <SetupNotice message={schema.message} />;
   }
 
-  const [plans, addresses] = await Promise.all([
+  const [plans, addresses, services] = await Promise.all([
     getCustomerRecurringBookings(customer.id),
     getCustomerAddresses(customer.id),
+    getServiceConfigs(),
   ]);
   const activePlans = plans.filter((plan) => plan.status === "Active");
 

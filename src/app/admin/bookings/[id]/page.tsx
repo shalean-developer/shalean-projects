@@ -14,6 +14,7 @@ import { hasSupabaseConfig } from "@/lib/supabase/admin";
 import {
   getBookingById,
   getBookingRequestsByBookingId,
+  getCleanerEarnings,
   getMatchingAvailableCleaners,
 } from "@/lib/supabase/queries";
 import {
@@ -59,10 +60,16 @@ export default async function AdminBookingDetailPage({
     notFound();
   }
 
-  const [matchingCleaners, requests] = await Promise.all([
+  const [matchingCleaners, requests, earnings] = await Promise.all([
     getMatchingAvailableCleaners(booking),
     getBookingRequestsByBookingId(booking.id),
+    getCleanerEarnings(),
   ]);
+  const bookingEarnings = earnings.filter(
+    (earning) => earning.booking_id === booking.id
+  );
+  const serviceFee = booking.service_data.pricingBreakdown?.serviceFee ?? 0;
+  const netBookingValue = Math.max(booking.total_amount - serviceFee, 0);
 
   return (
     <AdminPage
@@ -132,6 +139,8 @@ export default async function AdminBookingDetailPage({
                 value={booking.payment_type ?? "Not selected"}
               />
               <DetailRow label="Total Amount" value={formatRand(booking.total_amount)} />
+              <DetailRow label="Service Fee" value={formatRand(serviceFee)} />
+              <DetailRow label="Net Booking Value" value={formatRand(netBookingValue)} />
               <DetailRow label="Amount Paid" value={formatRand(booking.amount_paid)} />
               <DetailRow label="Balance Due" value={formatRand(booking.balance_due)} />
               <Separator />
@@ -163,6 +172,45 @@ export default async function AdminBookingDetailPage({
                     : "Not confirmed"
                 }
               />
+            </DetailCard>
+
+            <DetailCard title="Cleaner Earnings">
+              {bookingEarnings.length ? (
+                bookingEarnings.map((earning) => (
+                  <div key={earning.id} className="grid gap-3 rounded-lg border bg-background p-3">
+                    <DetailRow
+                      label="Assigned Cleaner"
+                      value={earning.cleaner?.full_name ?? "Unknown cleaner"}
+                    />
+                    <DetailRow label="Cleaner Role" value={earning.cleaner_role} />
+                    <DetailRow
+                      label="Customer Payment"
+                      value={formatRand(earning.booking_amount)}
+                    />
+                    <DetailRow
+                      label="Service Fee Deducted"
+                      value={formatRand(earning.service_fee)}
+                    />
+                    <DetailRow
+                      label="Net Booking Value"
+                      value={formatRand(earning.net_booking_value)}
+                    />
+                    <DetailRow
+                      label="Earnings Calculation"
+                      value={formatEarningCalculation(earning)}
+                    />
+                    <DetailRow
+                      label="Final Payout"
+                      value={formatRand(earning.net_amount)}
+                    />
+                    <DetailRow label="Payment Status" value={earning.status} />
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
+                  Earnings are generated after this booking is completed with an assigned cleaner.
+                </p>
+              )}
             </DetailCard>
 
             <DetailCard title="Customer Requests">
@@ -309,6 +357,18 @@ function DetailRow({ label, value }: { label: string; value: string }) {
       <span className="max-w-[62%] text-right font-medium">{value}</span>
     </div>
   );
+}
+
+function formatEarningCalculation(earning: {
+  cleaner_percentage: number | null;
+  net_booking_value: number;
+  cleaner_role: string;
+}) {
+  if (earning.cleaner_percentage === null) {
+    return `${earning.cleaner_role} fixed rate`;
+  }
+
+  return `${earning.cleaner_percentage}% of ${formatRand(earning.net_booking_value)}, with R250 minimum and R300 maximum`;
 }
 
 function MessageBlock({ label, value }: { label: string; value: string }) {

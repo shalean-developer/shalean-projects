@@ -1,11 +1,18 @@
 export type CleaningService = {
   id: string;
+  slug: string;
   name: string;
+  short_description: string;
   description: string;
   base_price: number;
+  room_price: number;
+  bathroom_price: number;
+  service_fee_type: "flat" | "percentage";
+  service_fee_amount: number;
   duration_minutes: number;
   active: boolean;
   created_at: string;
+  updated_at: string;
 };
 
 export type BookingStatus =
@@ -129,6 +136,8 @@ export type Cleaner = {
   full_name: string;
   email: string;
   phone: string;
+  role: "Cleaner" | "Team Leader";
+  started_at: string | null;
   profile_photo: string | null;
   bio: string | null;
   specialties: CleanerSpecialty[];
@@ -180,6 +189,18 @@ export type Payment = {
 export type BookingServiceData = {
   serviceSlug: string;
   serviceName: string;
+  pricingBreakdown?: {
+    basePrice: number;
+    roomCount: number;
+    roomTotal: number;
+    bathroomCount: number;
+    bathroomTotal: number;
+    addonTotal: number;
+    specialPricingTotal: number;
+    subtotal: number;
+    serviceFee: number;
+    total: number;
+  };
   cleanerSelectionType?: "auto" | "preferred";
   preferredCleanerId?: string;
   preferredCleanerName?: string;
@@ -462,6 +483,13 @@ export type CleanerEarning = {
   booking_id: string | null;
   gross_amount: number;
   platform_fee: number;
+  booking_amount: number;
+  service_fee: number;
+  net_booking_value: number;
+  cleaner_percentage: number | null;
+  cleaner_role: "Cleaner" | "Team Leader";
+  tenure_months: number;
+  calculation_details: Record<string, unknown>;
   net_amount: number;
   status: PayrollStatus;
   created_at: string;
@@ -485,6 +513,15 @@ export type PlatformSetting = {
   setting_key: string;
   setting_value: Record<string, unknown>;
   updated_at: string;
+};
+
+export type PricingHistory = {
+  id: string;
+  service_id: string | null;
+  changed_by: string | null;
+  change_type: string;
+  snapshot: Record<string, unknown>;
+  created_at: string;
 };
 
 export type ScheduleConflict = {

@@ -2,10 +2,11 @@ import { revalidatePath } from "next/cache";
 
 import { sendAutomationEmail } from "@/lib/email";
 import { generateInvoiceForBooking } from "@/lib/invoices";
+import { calculateBookingPricing, getSelectedAddons } from "@/lib/pricing";
 import { getNextRecurringDate } from "@/lib/recurring-schedule";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
-import { getBookingById } from "@/lib/supabase/queries";
+import { getBookingById, getServiceConfigBySlug } from "@/lib/supabase/queries";
 import type {
   AutomationChannel,
   AutomationType,
@@ -81,6 +82,24 @@ export async function generateDueRecurringBookings() {
       continue;
     }
 
+    const service = await getServiceConfigBySlug(plan.service_data.serviceSlug);
+    const selectedAddonIds = plan.selected_addons.map((addon) => addon.id);
+    const pricing = service
+      ? calculateBookingPricing(service, selectedAddonIds, Object.fromEntries(
+          plan.service_data.questions.map((question) => [
+            question.id,
+            question.value,
+          ])
+        ))
+      : null;
+    const selectedAddons = service
+      ? getSelectedAddons(service, selectedAddonIds)
+      : plan.selected_addons;
+    const bookingTotal = pricing?.total ?? plan.estimated_price;
+    const serviceData = pricing
+      ? { ...plan.service_data, pricingBreakdown: pricing }
+      : plan.service_data;
+
     const bookingReference = createBookingReference();
     const { data: booking, error: bookingError } = await getSupabaseAdmin()
       .from("bookings")
@@ -106,14 +125,14 @@ export async function generateDueRecurringBookings() {
           plan.preferred_time,
           3
         ),
-        service_data: plan.service_data,
-        selected_addons: plan.selected_addons,
-        estimated_price: plan.estimated_price,
+        service_data: serviceData,
+        selected_addons: selectedAddons,
+        estimated_price: bookingTotal,
         status: "Pending Confirmation",
         payment_status: "Pending Payment",
-        total_amount: plan.estimated_price,
+        total_amount: bookingTotal,
         amount_paid: 0,
-        balance_due: plan.estimated_price,
+        balance_due: bookingTotal,
         can_reschedule: true,
         can_cancel: true,
       })

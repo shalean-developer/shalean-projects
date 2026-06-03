@@ -34,6 +34,8 @@ export function CleanerForm({ cleaner }: CleanerFormProps) {
       fullName: cleaner?.full_name ?? "",
       email: cleaner?.email ?? "",
       phone: cleaner?.phone ?? "",
+      role: cleaner?.role ?? "Cleaner",
+      startedAt: cleaner?.started_at ?? new Date().toISOString().slice(0, 10),
       profilePhoto: cleaner?.profile_photo ?? "",
       bio: cleaner?.bio ?? "",
       specialties: cleaner?.specialties ?? [],
@@ -73,6 +75,18 @@ export function CleanerForm({ cleaner }: CleanerFormProps) {
         </Field>
         <Field label="Phone" error={errors.phone?.message}>
           <Input {...register("phone")} autoComplete="tel" />
+        </Field>
+        <Field label="Role" error={errors.role?.message}>
+          <select
+            {...register("role")}
+            className="h-9 rounded-lg border bg-background px-3 text-sm"
+          >
+            <option value="Cleaner">Cleaner</option>
+            <option value="Team Leader">Team Leader</option>
+          </select>
+        </Field>
+        <Field label="Start Date" error={errors.startedAt?.message}>
+          <Input {...register("startedAt")} type="date" />
         </Field>
         <Field label="Profile Photo" error={errors.profilePhoto?.message}>
           <Input
