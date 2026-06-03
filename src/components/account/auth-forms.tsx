@@ -55,8 +55,13 @@ function LoginForm() {
 
   return (
     <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
-      <Field label="Email" error={form.formState.errors.email?.message}>
-        <Input type="email" autoComplete="email" {...form.register("email")} />
+      <Field label="Email or cleaner phone" error={form.formState.errors.email?.message}>
+        <Input
+          autoComplete="username"
+          inputMode="email"
+          placeholder="you@example.com or 0792022648"
+          {...form.register("email")}
+        />
       </Field>
       <Field label="Password" error={form.formState.errors.password?.message}>
         <Input

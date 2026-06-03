@@ -36,6 +36,9 @@ export default async function AdminSchedulePage({
     })
     .sort(sortBySchedule);
   const unassigned = weekly.filter((booking) => !booking.assigned_cleaner_id);
+  const busyCleanerIds = new Set(
+    daily.flatMap((booking) => booking.assigned_cleaners.map((cleaner) => cleaner.id))
+  );
 
   return (
     <AdminPage
@@ -155,14 +158,22 @@ export default async function AdminSchedulePage({
 
           <Card className="rounded-lg">
             <CardHeader>
-              <CardTitle>Cleaner workload</CardTitle>
+              <CardTitle>Cleaner availability</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3">
               {cleaners.map((cleaner) => (
                 <div key={cleaner.id} className="rounded-lg border bg-background p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{cleaner.full_name}</p>
-                    <StatusBadge status={cleaner.active ? "Active" : "Inactive"} />
+                    <StatusBadge
+                      status={
+                        !cleaner.active
+                          ? "Inactive"
+                          : busyCleanerIds.has(cleaner.id)
+                            ? "Busy"
+                            : "Available"
+                      }
+                    />
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {

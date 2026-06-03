@@ -25,6 +25,17 @@ type InitializePaystackPayload = {
   amountDue: number;
 };
 
+type InitializeInvoicePaystackPayload = {
+  invoice: {
+    id: string;
+    invoice_number: string;
+    customer_email: string;
+    customer_name: string;
+  };
+  paymentReference: string;
+  amountDue: number;
+};
+
 export type PaystackInitializeResponse = {
   authorization_url: string;
   access_code: string;
@@ -104,6 +115,43 @@ export async function initializePaystackTransaction({
   if (!response.ok || !payload.status) {
     throw new Error(
       payload.message ?? "Paystack could not initialize this payment."
+    );
+  }
+
+  return payload.data as PaystackInitializeResponse;
+}
+
+export async function initializeInvoicePaystackTransaction({
+  invoice,
+  paymentReference,
+  amountDue,
+}: InitializeInvoicePaystackPayload): Promise<PaystackInitializeResponse> {
+  const siteUrl = getSiteUrl();
+  const response = await fetch(`${PAYSTACK_BASE_URL}/transaction/initialize`, {
+    method: "POST",
+    headers: getPaystackHeaders(),
+    body: JSON.stringify({
+      email: invoice.customer_email,
+      amount: toPaystackSubunit(amountDue),
+      currency: DEFAULT_CURRENCY,
+      reference: paymentReference,
+      callback_url: `${siteUrl}/payment/success?invoiceId=${encodeURIComponent(
+        invoice.id
+      )}`,
+      metadata: {
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        customer_name: invoice.customer_name,
+        payment_type: "Invoice",
+      },
+    }),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok || !payload.status) {
+    throw new Error(
+      payload.message ?? "Paystack could not initialize this invoice payment."
     );
   }
 

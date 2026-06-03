@@ -401,6 +401,8 @@ export type Invoice = {
   balance_due: number;
   due_date: string | null;
   payment_link: string | null;
+  payment_reference: string | null;
+  paystack_reference: string | null;
   issued_at: string | null;
   paid_at: string | null;
   created_at: string;
@@ -555,9 +557,16 @@ export type PricingHistory = {
 export type ScheduleConflict = {
   cleaner: Cleaner;
   overlappingBookings: BookingWithService[];
+  sameDateBookings: BookingWithService[];
   outsideAvailability: boolean;
   inactive: boolean;
   canAssign: boolean;
+};
+
+export type CleanerDateAvailability = {
+  cleaner: Cleaner;
+  status: "available" | "busy" | "unavailable";
+  reason: string;
 };
 
 export type ReportingSummary = {

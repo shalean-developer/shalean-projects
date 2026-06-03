@@ -32,8 +32,9 @@ export function CleanerForm({ cleaner }: CleanerFormProps) {
     resolver: zodResolver(cleanerFormSchema),
     defaultValues: {
       fullName: cleaner?.full_name ?? "",
-      email: cleaner?.email ?? "",
+      email: "",
       phone: cleaner?.phone ?? "",
+      password: "",
       role: cleaner?.role ?? "Cleaner",
       startedAt: cleaner?.started_at ?? new Date().toISOString().slice(0, 10),
       profilePhoto: cleaner?.profile_photo ?? "",
@@ -70,11 +71,30 @@ export function CleanerForm({ cleaner }: CleanerFormProps) {
         <Field label="Full Name" error={errors.fullName?.message}>
           <Input {...register("fullName")} autoComplete="name" />
         </Field>
-        <Field label="Email" error={errors.email?.message}>
-          <Input {...register("email")} type="email" autoComplete="email" />
-        </Field>
         <Field label="Phone" error={errors.phone?.message}>
-          <Input {...register("phone")} autoComplete="tel" />
+          <Input
+            {...register("phone")}
+            autoComplete="tel"
+            inputMode="tel"
+            placeholder="0792022648"
+          />
+        </Field>
+        {cleaner?.email ? (
+          <div className="grid gap-2 rounded-lg border bg-background p-3 text-sm">
+            <span className="font-medium">Auth email</span>
+            <span className="font-mono text-muted-foreground">{cleaner.email}</span>
+          </div>
+        ) : null}
+        <Field
+          label={cleaner ? "Reset password" : "Temporary password"}
+          error={errors.password?.message}
+        >
+          <Input
+            {...register("password")}
+            type="password"
+            autoComplete="new-password"
+            placeholder={cleaner ? "Leave blank to keep current password" : ""}
+          />
         </Field>
         <Field label="Role" error={errors.role?.message}>
           <select

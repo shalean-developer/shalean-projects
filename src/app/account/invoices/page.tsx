@@ -20,6 +20,8 @@ export default async function AccountInvoicesPage() {
   }
 
   const invoices = await getCustomerInvoices(customer.id);
+  const outstanding = invoices.filter((invoice) => invoice.invoice_status !== "Paid");
+  const paid = invoices.filter((invoice) => invoice.invoice_status === "Paid");
 
   return (
     <div className="grid gap-5">
@@ -32,21 +34,36 @@ export default async function AccountInvoicesPage() {
 
       <Card className="rounded-lg">
         <CardHeader>
-          <CardTitle>Your invoices</CardTitle>
+          <CardTitle>Outstanding invoices</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          {invoices.length ? (
-            invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} />)
+          {outstanding.length ? (
+            outstanding.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} />)
           ) : (
             <div className="grid min-h-36 place-items-center rounded-lg border border-dashed p-5 text-center">
               <div>
                 <FileText className="mx-auto size-6 text-muted-foreground" />
                 <p className="mt-3 font-medium">No invoices yet</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Invoices appear after payments or completed bookings.
+                  Outstanding invoices appear here when payment is due.
                 </p>
               </div>
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-lg">
+        <CardHeader>
+          <CardTitle>Paid invoices</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {paid.length ? (
+            paid.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} />)
+          ) : (
+            <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">
+              Paid invoices will appear here after Paystack confirms payment.
+            </p>
           )}
         </CardContent>
       </Card>
@@ -72,6 +89,9 @@ function InvoiceCard({ invoice }: { invoice: Invoice }) {
       <div className="flex items-center gap-3">
         <StatusBadge status={invoice.invoice_status} />
         <span className="font-medium">{formatRand(invoice.total)}</span>
+        {invoice.payment_link && invoice.invoice_status !== "Paid" ? (
+          <span className="text-sm font-medium text-primary">Pay</span>
+        ) : null}
       </div>
     </Link>
   );

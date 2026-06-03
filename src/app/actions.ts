@@ -32,10 +32,17 @@ import type { ServiceConfig, ServiceQuestion } from "@/config/services";
 import { bookingWizardSchema, type BookingWizardValues } from "@/lib/booking-schema";
 import {
   generateInvoiceForBooking,
+  generateInvoiceForBookings,
   generateMonthlyInvoiceForCustomer,
+  initializeInvoicePayment,
   sendInvoiceAndLog,
   updateInvoiceStatus,
 } from "@/lib/invoices";
+import {
+  cleanerAuthEmailFromPhone,
+  isPhoneLoginIdentifier,
+  normalizeSouthAfricanPhone,
+} from "@/lib/phone-auth";
 import { calculatePaymentAmount } from "@/lib/paystack";
 import { initializeBookingPayment } from "@/lib/payments";
 import {
@@ -54,8 +61,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { toSupabaseError } from "@/lib/supabase/errors";
 import {
   getBookingById,
+  getCleanerById,
   getCleanerBookingById,
   getCustomerRecurringBookingById,
+  getCleanerDateAvailability,
   getServiceConfigBySlug,
   getScheduleConflicts,
   getInvoiceById,
@@ -178,6 +187,15 @@ export async function createBooking(values: BookingWizardValues) {
           preferredCleanerId: "",
           preferredCleanerName: "",
         };
+
+  if (preferredCleaner.preferredCleanerId) {
+    await assertPreferredCleanerAvailable({
+      serviceName: service.name,
+      bookingDate: parsed.data.bookingDate,
+      bookingTime: parsed.data.bookingTime,
+      cleanerId: preferredCleaner.preferredCleanerId,
+    });
+  }
 
   if (recurringFrequency) {
     if (!account?.customer) {
@@ -438,13 +456,19 @@ export async function signUpCustomer(values: unknown) {
   }
 
   const supabase = await createSupabaseServerClient();
+  const phone = normalizeSouthAfricanPhone(parsed.data.phone);
+
+  if (!phone) {
+    throw new Error("Enter a valid South African phone number.");
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
       data: {
         full_name: parsed.data.fullName,
-        phone: parsed.data.phone,
+        phone,
       },
     },
   });
@@ -468,8 +492,16 @@ export async function loginCustomer(values: unknown) {
   }
 
   const supabase = await createSupabaseServerClient();
+  const email = isPhoneLoginIdentifier(parsed.data.email)
+    ? cleanerAuthEmailFromPhone(parsed.data.email)
+    : parsed.data.email.trim();
+
+  if (!email) {
+    throw new Error("Enter a valid phone number or email address.");
+  }
+
   const { error } = await supabase.auth.signInWithPassword({
-    email: parsed.data.email,
+    email,
     password: parsed.data.password,
   });
 
@@ -498,7 +530,7 @@ export async function updateCustomerProfile(values: ProfileValues) {
     .from("customers")
     .update({
       full_name: parsed.data.fullName,
-      phone: parsed.data.phone,
+      phone: normalizeSouthAfricanPhone(parsed.data.phone),
     })
     .eq("id", customer.id);
 
@@ -851,8 +883,8 @@ export async function createAdminDraftBooking(formData: FormData) {
   const city = getRequiredString(formData, "city");
   const status = getRequiredString(formData, "status") as BookingStatus;
 
-  if (status !== "Draft" && status !== "Pending Invoice") {
-    throw new Error("Admin-created bookings must start as Draft or Pending Invoice.");
+  if (status !== "Draft" && status !== "Pending Invoice" && status !== "Confirmed") {
+    throw new Error("Admin-created bookings must start as Draft, Pending Invoice, or Confirmed.");
   }
 
   const [service, customerResult] = await Promise.all([
@@ -873,10 +905,19 @@ export async function createAdminDraftBooking(formData: FormData) {
   }
 
   const serviceData = buildAdminBookingServiceData(service, formData);
+  const selectedAddonIds = formData
+    .getAll("selected_addons")
+    .filter((value): value is string => typeof value === "string");
+  validateServiceInput(service, serviceData, selectedAddonIds);
+  const selectedAddons = getSelectedAddons(service, selectedAddonIds);
   const estimatedTotal =
     getNumber(formData, "total_amount") ||
-    calculateEstimatedTotal(service, [], serviceData);
-  const pricingBreakdown = calculateBookingPricing(service, [], serviceData);
+    calculateEstimatedTotal(service, selectedAddonIds, serviceData);
+  const pricingBreakdown = calculateBookingPricing(
+    service,
+    selectedAddonIds,
+    serviceData
+  );
   const bookingReference = createBookingReference();
   const { data, error } = await getSupabaseAdmin()
     .from("bookings")
@@ -907,11 +948,11 @@ export async function createAdminDraftBooking(formData: FormData) {
           value: serviceData[question.id] ?? "",
         })),
       },
-      selected_addons: [],
+      selected_addons: selectedAddons,
       estimated_price: estimatedTotal,
       number_of_cleaners: clampCleanerCount(getNumber(formData, "number_of_cleaners") || 1),
       status,
-      payment_status: "Pending Payment",
+      payment_status: status === "Confirmed" ? "Pending Payment" : "Pending Payment",
       payment_type: null,
       total_amount: estimatedTotal,
       amount_paid: 0,
@@ -939,9 +980,22 @@ export async function createCleaner(values: CleanerFormValues) {
     throw new Error("Please complete all required cleaner details.");
   }
 
+  await assertCleanerPhoneIsUnique(parsed.data.phone);
+
+  const payload = toCleanerPayload(parsed.data);
+  const authUserId = await upsertCleanerAuthUser({
+    email: String(payload.email),
+    phone: String(payload.phone),
+    fullName: parsed.data.fullName,
+    password: parsed.data.password,
+  });
+
   const { data, error } = await getSupabaseAdmin()
     .from("cleaners")
-    .insert(toCleanerPayload(parsed.data))
+    .insert({
+      ...payload,
+      ...(authUserId ? { user_id: authUserId } : {}),
+    })
     .select("id")
     .single();
 
@@ -962,9 +1016,24 @@ export async function updateCleaner(cleanerId: string, values: CleanerFormValues
     throw new Error("Please complete all required cleaner details.");
   }
 
+  await assertCleanerPhoneIsUnique(parsed.data.phone, cleanerId);
+
+  const payload = toCleanerPayload(parsed.data);
+  const existing = await getCleanerById(cleanerId);
+  const authUserId = await upsertCleanerAuthUser({
+    email: String(payload.email),
+    phone: String(payload.phone),
+    fullName: parsed.data.fullName,
+    password: parsed.data.password,
+    userId: existing?.user_id ?? undefined,
+  });
+
   const { error } = await getSupabaseAdmin()
     .from("cleaners")
-    .update(toCleanerPayload(parsed.data))
+    .update({
+      ...payload,
+      ...(authUserId ? { user_id: authUserId } : {}),
+    })
     .eq("id", cleanerId);
 
   if (error) {
@@ -1200,6 +1269,31 @@ export async function generateMonthlyInvoiceAction(formData: FormData) {
   redirect(`/admin/invoices/${invoice.id}`);
 }
 
+export async function generateSelectedBookingsInvoiceAction(formData: FormData) {
+  await requireAdmin("/admin/invoices");
+  const dueDate = getRequiredString(formData, "due_date");
+  const bookingIds = formData
+    .getAll("booking_ids")
+    .filter((value): value is string => typeof value === "string");
+  const invoice = await generateInvoiceForBookings({
+    bookingIds,
+    dueDate,
+    send: true,
+  });
+
+  if (!invoice) {
+    throw new Error("Invoice could not be created.");
+  }
+
+  revalidatePath("/admin/invoices");
+  redirect(`/admin/invoices/${invoice.id}`);
+}
+
+export async function initializeInvoicePaymentAction(formData: FormData) {
+  const invoiceId = getRequiredString(formData, "invoice_id");
+  await initializeInvoicePayment(invoiceId);
+}
+
 export async function sendInvoiceAction(formData: FormData) {
   await requireAdmin("/admin/invoices");
   const invoiceId = getRequiredString(formData, "invoice_id");
@@ -1259,6 +1353,10 @@ export async function assignCleanerToBooking(formData: FormData) {
 
   if (conflicts.overlappingBookings.length && !manualOverride) {
     throw new Error("Cleaner already has an overlapping job. Use manual override to assign anyway.");
+  }
+
+  if (conflicts.sameDateBookings.length) {
+    throw new Error("Cleaner already has a booking on this date and cannot be double-booked.");
   }
 
   const { error: bookingError } = await getSupabaseAdmin()
@@ -2209,6 +2307,29 @@ function validateServiceInput(
   }
 }
 
+async function assertPreferredCleanerAvailable({
+  serviceName,
+  bookingDate,
+  bookingTime,
+  cleanerId,
+}: {
+  serviceName: string;
+  bookingDate: string;
+  bookingTime: string;
+  cleanerId: string;
+}) {
+  const availability = await getCleanerDateAvailability({
+    serviceName,
+    bookingDate,
+    bookingTime,
+  });
+  const selected = availability.find((item) => item.cleaner.id === cleanerId);
+
+  if (!selected || selected.status !== "available") {
+    throw new Error("The selected cleaner is not available for this date.");
+  }
+}
+
 function validateServiceQuestion(
   question: ServiceQuestion,
   value: string | number | undefined
@@ -2352,10 +2473,17 @@ function slugify(value: string) {
 }
 
 function toCleanerPayload(values: CleanerFormValues) {
+  const phone = normalizeSouthAfricanPhone(values.phone);
+  const email = cleanerAuthEmailFromPhone(values.phone);
+
+  if (!phone || !email) {
+    throw new Error("Enter a valid South African phone number.");
+  }
+
   return {
     full_name: values.fullName,
-    email: values.email,
-    phone: values.phone,
+    email,
+    phone,
     role: values.role,
     started_at: values.startedAt,
     profile_photo: values.profilePhoto || null,
@@ -2365,6 +2493,82 @@ function toCleanerPayload(values: CleanerFormValues) {
     completed_jobs: values.completedJobs,
     active: values.active,
   };
+}
+
+async function assertCleanerPhoneIsUnique(phoneValue: string, cleanerId?: string) {
+  const phone = normalizeSouthAfricanPhone(phoneValue);
+  const email = cleanerAuthEmailFromPhone(phoneValue);
+
+  if (!phone || !email) {
+    throw new Error("Enter a valid South African phone number.");
+  }
+
+  let query = getSupabaseAdmin()
+    .from("cleaners")
+    .select("id")
+    .or(`phone.eq.${phone},email.ilike.${email}`);
+
+  if (cleanerId) {
+    query = query.neq("id", cleanerId);
+  }
+
+  const { data, error } = await query.limit(1);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  if (data?.length) {
+    throw new Error("A cleaner with this phone number already exists.");
+  }
+}
+
+async function upsertCleanerAuthUser({
+  email,
+  phone,
+  fullName,
+  password,
+  userId,
+}: {
+  email: string;
+  phone: string;
+  fullName: string;
+  password?: string;
+  userId?: string;
+}) {
+  if (!password?.trim()) {
+    return userId ?? null;
+  }
+
+  if (userId) {
+    const { data, error } = await getSupabaseAdmin().auth.admin.updateUserById(
+      userId,
+      {
+        email,
+        password,
+        user_metadata: { full_name: fullName, phone, role: "cleaner" },
+      }
+    );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return data.user.id;
+  }
+
+  const { data, error } = await getSupabaseAdmin().auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name: fullName, phone, role: "cleaner" },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data.user.id;
 }
 
 function toScheduledTimestamp(date: string, time: string, addHours = 0) {

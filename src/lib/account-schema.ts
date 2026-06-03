@@ -1,18 +1,27 @@
 import { z } from "zod";
 
+import { isValidSouthAfricanPhone } from "@/lib/phone-auth";
+
 export const authSchema = z.object({
-  email: z.email("Enter a valid email address."),
+  email: z.string().trim().min(2, "Enter your email or cleaner phone number."),
   password: z.string().min(6, "Password must be at least 6 characters."),
 });
 
 export const signupSchema = authSchema.extend({
+  email: z.email("Enter a valid email address."),
   fullName: z.string().min(2, "Enter your full name."),
-  phone: z.string().min(7, "Enter a valid phone number."),
+  phone: z
+    .string()
+    .trim()
+    .refine(isValidSouthAfricanPhone, "Enter a valid South African phone number."),
 });
 
 export const profileSchema = z.object({
   fullName: z.string().min(2, "Enter your full name."),
-  phone: z.string().min(7, "Enter a valid phone number."),
+  phone: z
+    .string()
+    .trim()
+    .refine(isValidSouthAfricanPhone, "Enter a valid South African phone number."),
 });
 
 export const addressSchema = z.object({

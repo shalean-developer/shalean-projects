@@ -1,11 +1,22 @@
 import { z } from "zod";
 
+import { isValidSouthAfricanPhone } from "@/lib/phone-auth";
 import { cleanerSpecialties } from "@/lib/types";
 
 export const cleanerFormSchema = z.object({
   fullName: z.string().trim().min(2, "Full name is required."),
-  email: z.email("Enter a valid email address."),
-  phone: z.string().trim().min(7, "Phone number is required."),
+  email: z.string().optional(),
+  phone: z
+    .string()
+    .trim()
+    .refine(isValidSouthAfricanPhone, "Enter a valid South African phone number."),
+  password: z
+    .string()
+    .optional()
+    .refine(
+      (value) => !value || value.length >= 6,
+      "Password must be at least 6 characters."
+    ),
   role: z.enum(["Cleaner", "Team Leader"]),
   startedAt: z.string().min(1, "Start date is required."),
   profilePhoto: z.string().trim(),

@@ -5,8 +5,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatRand } from "@/lib/pricing";
 import { getBookingByReference } from "@/lib/supabase/queries";
+import { verifyAndFinalizeInvoicePayment } from "@/lib/invoices";
 import { verifyAndFinalizePayment } from "@/lib/payments";
-import type { BookingWithService } from "@/lib/types";
+import type { BookingWithService, Invoice } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -17,12 +18,15 @@ export default async function PaymentSuccessPage({
     reference?: string;
     trxref?: string;
     bookingReference?: string;
+    invoiceId?: string;
   }>;
 }) {
   const params = await searchParams;
   const reference = params.reference ?? params.trxref ?? null;
   const result = reference
-    ? await verifyPayment(reference)
+    ? params.invoiceId
+      ? await verifyInvoicePayment(reference)
+      : await verifyPayment(reference)
     : {
         ok: false,
         message: "No Paystack reference was provided.",
@@ -50,18 +54,19 @@ export default async function PaymentSuccessPage({
           </div>
           <div className="grid gap-3">
             <h1 className="text-3xl font-semibold leading-tight tracking-normal sm:text-4xl">
-              {result.ok
-                ? result.booking?.recurring_booking_id
-                  ? "Recurring plan activated"
-                  : "Booking confirmed"
-                : "Payment not confirmed"}
+              {getResultTitle(result)}
             </h1>
             <p className="mx-auto max-w-xl leading-7 text-muted-foreground">
               {result.message}
             </p>
           </div>
 
-          {result.booking ? <PaymentDetails booking={result.booking} /> : null}
+          {"invoice" in result && result.invoice ? (
+            <InvoicePaymentDetails invoice={result.invoice} />
+          ) : null}
+          {"booking" in result && result.booking ? (
+            <PaymentDetails booking={result.booking} />
+          ) : null}
 
           <div className="flex flex-col justify-center gap-3 sm:flex-row">
             <Link href="/book" className={buttonVariants({ className: "h-11 px-4" })}>
@@ -97,6 +102,56 @@ async function verifyPayment(reference: string) {
       booking: null,
     };
   }
+}
+
+function getResultTitle(
+  result:
+    | Awaited<ReturnType<typeof verifyPayment>>
+    | Awaited<ReturnType<typeof verifyInvoicePayment>>
+    | { ok: boolean; message: string; booking: BookingWithService | null }
+) {
+  if (!result.ok) {
+    return "Payment not confirmed";
+  }
+
+  if ("invoice" in result) {
+    return "Invoice paid";
+  }
+
+  return result.booking?.recurring_booking_id
+    ? "Recurring plan activated"
+    : "Booking confirmed";
+}
+
+async function verifyInvoicePayment(reference: string) {
+  try {
+    return await verifyAndFinalizeInvoicePayment(reference);
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unable to verify this invoice payment.",
+      invoice: null,
+    };
+  }
+}
+
+function InvoicePaymentDetails({
+  invoice,
+}: {
+  invoice: Invoice;
+}) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-border/80 bg-background/60 p-5 text-left shadow-sm">
+      <DetailRow label="Invoice Number" value={invoice.invoice_number} />
+      <DetailRow label="Payment Status" value={invoice.invoice_status} />
+      <DetailRow label="Total Amount" value={formatRand(invoice.total)} />
+      <DetailRow label="Amount Paid" value={formatRand(invoice.amount_paid)} />
+      <DetailRow label="Balance Due" value={formatRand(invoice.balance_due)} />
+    </div>
+  );
 }
 
 function PaymentDetails({ booking }: { booking: BookingWithService }) {

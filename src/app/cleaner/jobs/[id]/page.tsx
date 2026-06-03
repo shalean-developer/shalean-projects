@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { requireCleaner } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
-import { getCleanerBookingById } from "@/lib/supabase/queries";
+import { formatRand } from "@/lib/pricing";
+import { getCleanerBookingById, getCleanerEarnings } from "@/lib/supabase/queries";
 import type { JobStatus } from "@/lib/types";
 
 const workflowActions: { status: JobStatus; label: string }[] = [
@@ -25,11 +26,16 @@ export default async function CleanerJobDetailPage({
 }) {
   const { id } = await params;
   const { cleaner } = await requireCleaner(`/cleaner/jobs/${id}`);
-  const job = await getCleanerBookingById(cleaner.id, id);
+  const [job, earnings] = await Promise.all([
+    getCleanerBookingById(cleaner.id, id),
+    getCleanerEarnings(cleaner.id),
+  ]);
 
   if (!job) {
     notFound();
   }
+
+  const earning = earnings.find((item) => item.booking_id === job.id);
 
   return (
     <div className="grid gap-5">
@@ -48,6 +54,10 @@ export default async function CleanerJobDetailPage({
             <CardContent className="grid gap-3 text-sm">
               <DetailRow label="Customer" value={job.customer_name} />
               <DetailRow label="Phone" value={job.customer_phone} />
+              <DetailRow
+                label="Cleaners assigned"
+                value={String(job.assigned_cleaners.length || job.number_of_cleaners)}
+              />
               <Separator />
               <DetailRow label="Address" value={job.address} />
               <DetailRow label="Suburb" value={job.suburb} />
@@ -79,6 +89,17 @@ export default async function CleanerJobDetailPage({
             <CardTitle>Workflow</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
+            <div className="rounded-lg border bg-background p-3">
+              <p className="text-sm text-muted-foreground">Estimated earning</p>
+              <p className="mt-1 text-2xl font-semibold tracking-normal">
+                {formatRand(earning?.net_amount ?? estimateCleanerEarning(job.service_name))}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {earning
+                  ? "Calculated from the current Shalean earning rules."
+                  : "Estimated from the current Shalean earning rules."}
+              </p>
+            </div>
             <StatusBadge status={job.job_status} />
             {workflowActions.map((action) => (
               <form key={action.status} action={updateCleanerJobWorkflow}>
@@ -94,6 +115,14 @@ export default async function CleanerJobDetailPage({
       </div>
     </div>
   );
+}
+
+function estimateCleanerEarning(serviceName: string) {
+  if (serviceName === "Deep Cleaning" || serviceName === "Moving Cleaning") {
+    return 250;
+  }
+
+  return 250;
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {

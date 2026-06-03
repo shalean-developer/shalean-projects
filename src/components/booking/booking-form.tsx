@@ -196,6 +196,9 @@ export function BookingForm({
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mobileEstimateOpen, setMobileEstimateOpen] = useState(false);
+  const [dateAvailability, setDateAvailability] = useState<
+    Record<string, "available" | "busy" | "unavailable">
+  >({});
   const initialStepIndex = getInitialStepIndex(initialStepSlug, storedStep);
   const [currentStep, setCurrentStep] = useState(initialStepIndex);
   const initialServiceValue = getInitialServiceSlug(
@@ -260,8 +263,16 @@ export function BookingForm({
       cleaner.specialties.some((specialty) => specialty === selectedService.name)
     );
 
-    return serviceMatches.length ? serviceMatches : activeCleaners;
-  }, [activeCleaners, selectedService]);
+    const candidates = serviceMatches.length ? serviceMatches : activeCleaners;
+
+    if (!values.bookingDate) {
+      return candidates;
+    }
+
+    return candidates.filter(
+      (cleaner) => dateAvailability[cleaner.id] === "available"
+    );
+  }, [activeCleaners, dateAvailability, selectedService, values.bookingDate]);
   const selectedCleaner = matchingCleaners.find(
     (cleaner) => cleaner.id === values.preferredCleanerId
   );
@@ -369,6 +380,57 @@ export function BookingForm({
       });
     }
   }, [form, values.paymentType]);
+
+  useEffect(() => {
+    if (!selectedService || !values.bookingDate) {
+      return;
+    }
+
+    let cancelled = false;
+    const params = new URLSearchParams({
+      serviceName: selectedService.name,
+      date: values.bookingDate,
+    });
+
+    if (values.bookingTime) {
+      params.set("time", values.bookingTime);
+    }
+
+    fetch(`/api/cleaners/availability?${params.toString()}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextAvailability: Record<
+          string,
+          "available" | "busy" | "unavailable"
+        > = {};
+
+        for (const item of payload?.cleaners ?? []) {
+          if (
+            typeof item.id === "string" &&
+            (item.status === "available" ||
+              item.status === "busy" ||
+              item.status === "unavailable")
+          ) {
+            nextAvailability[item.id] = item.status;
+          }
+        }
+
+        setDateAvailability(nextAvailability);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDateAvailability({});
+        }
+      })
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedService, values.bookingDate, values.bookingTime]);
 
   function chooseService(service: ServiceConfig) {
     const serviceData = getDefaultServiceData(service);
@@ -733,7 +795,9 @@ export function BookingForm({
                           </div>
                         ) : (
                           <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
-                            No active cleaners are available to show yet. You can still use auto-assign.
+                            {values.bookingDate
+                                ? "No cleaners are available for this service on the selected date. You can still use auto-assign for the operations team to review."
+                                : "Choose a date to see available cleaners."}
                           </p>
                         )}
                         {preferredCleanerMissing ? (

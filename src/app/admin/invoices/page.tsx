@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { Eye, FileText } from "lucide-react";
 
-import { generateMonthlyInvoiceAction } from "@/app/actions";
+import {
+  generateMonthlyInvoiceAction,
+  generateSelectedBookingsInvoiceAction,
+} from "@/app/actions";
 import { AdminPage } from "@/components/admin/admin-page";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -16,7 +19,7 @@ import {
 } from "@/components/ui/table";
 import { formatRand } from "@/lib/pricing";
 import { getV15SchemaStatus } from "@/lib/supabase/schema";
-import { getCustomers, getInvoices } from "@/lib/supabase/queries";
+import { getBookings, getCustomers, getInvoices } from "@/lib/supabase/queries";
 import { invoiceStatuses, type Invoice, type InvoiceStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -33,10 +36,17 @@ export default async function AdminInvoicesPage({
   }
 
   const params = await searchParams;
-  const [invoices, customers] = await Promise.all([getInvoices(), getCustomers()]);
+  const [invoices, customers, bookings] = await Promise.all([
+    getInvoices(),
+    getCustomers(),
+    getBookings(),
+  ]);
   const filtered = params.status
     ? invoices.filter((invoice) => invoice.invoice_status === params.status)
     : invoices;
+  const unpaidBookings = bookings.filter(
+    (booking) => booking.balance_due > 0 && booking.status !== "Cancelled"
+  );
 
   return (
     <AdminPage
@@ -44,6 +54,59 @@ export default async function AdminInvoicesPage({
       title="Invoices"
       description="View invoices, filter by status, and manage payment state."
     >
+        <Card className="mb-5 rounded-lg">
+          <CardHeader>
+            <CardTitle>Create invoice from bookings</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form action={generateSelectedBookingsInvoiceAction} className="grid gap-4">
+              <div className="grid gap-3">
+                {unpaidBookings.slice(0, 12).map((booking) => (
+                  <label
+                    key={booking.id}
+                    className="grid gap-3 rounded-lg border bg-background p-3 text-sm sm:grid-cols-[auto_1fr_auto] sm:items-center"
+                  >
+                    <input
+                      name="booking_ids"
+                      value={booking.id}
+                      type="checkbox"
+                      className="size-4"
+                    />
+                    <span>
+                      <span className="block font-medium">
+                        {booking.customer_name} - {booking.service_name}
+                      </span>
+                      <span className="block text-muted-foreground">
+                        {booking.booking_date} - {booking.booking_reference}
+                      </span>
+                    </span>
+                    <span className="font-semibold">{formatRand(booking.balance_due)}</span>
+                  </label>
+                ))}
+                {!unpaidBookings.length ? (
+                  <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    No unpaid bookings are ready for invoicing.
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="grid gap-1 text-sm">
+                  <span className="font-medium">Due date</span>
+                  <input
+                    name="due_date"
+                    type="date"
+                    required
+                    className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
+                  />
+                </label>
+                <button className={buttonVariants()} type="submit">
+                  Create and email invoice
+                </button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
         <Card className="mb-5 rounded-lg">
           <CardHeader>
             <CardTitle>Monthly invoice</CardTitle>

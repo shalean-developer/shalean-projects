@@ -15,6 +15,7 @@ import type {
   BookingStatus,
   BookingWithService,
   Cleaner,
+  CleanerDateAvailability,
   CleanerEarning,
   CleanerAvailability,
   CleanerSpecialty,
@@ -58,7 +59,7 @@ const recurringBookingSelect =
   "id, customer_id, service_id, address_id, frequency, preferred_day, preferred_time, service_data, selected_addons, estimated_price, status, next_booking_date, created_at, services(name), customer_addresses(id, customer_id, label, address, suburb, city, access_instructions, gate_code, parking_instructions, is_default, created_at), customers(id, user_id, full_name, email, phone, created_at)";
 
 const invoiceSelect =
-  `id, booking_id, customer_id, invoice_number, invoice_status, subtotal, total, amount_paid, balance_due, due_date, payment_link, issued_at, paid_at, created_at, invoice_line_items(id, invoice_id, booking_id, description, service_type, booking_date, amount, created_at, bookings(${bookingSelect})), bookings(${bookingSelect}), customers(id, user_id, full_name, email, phone, created_at)`;
+  `id, booking_id, customer_id, invoice_number, invoice_status, subtotal, total, amount_paid, balance_due, due_date, payment_link, payment_reference, paystack_reference, issued_at, paid_at, created_at, invoice_line_items(id, invoice_id, booking_id, description, service_type, booking_date, amount, created_at, bookings(${bookingSelect})), bookings(${bookingSelect}), customers(id, user_id, full_name, email, phone, created_at)`;
 
 const reviewSelect =
   `id, booking_id, customer_id, rating, review_text, public, created_at, bookings(${bookingSelect}), customers(id, user_id, full_name, email, phone, created_at)`;
@@ -678,55 +679,108 @@ export async function getCleanerAvailability(
 export async function getMatchingAvailableCleaners(
   booking: BookingWithService
 ): Promise<Cleaner[]> {
-  const serviceName = booking.service_name as CleanerSpecialty;
-  const bookingTime = booking.booking_time.slice(0, 5);
+  const statuses = await getCleanerDateAvailability({
+    serviceName: booking.service_name,
+    bookingDate: booking.booking_date,
+    bookingTime: booking.booking_time,
+  });
 
-  const { data: cleaners, error: cleanersError } = await getSupabaseAdmin()
-    .from("cleaners")
-    .select(
-      "id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at"
-    )
-    .eq("active", true)
-    .order("full_name", { ascending: true });
+  return statuses
+    .filter((item) => item.status === "available")
+    .map((item) => item.cleaner);
+}
 
-  if (cleanersError) {
-    throw toSupabaseError(cleanersError);
-  }
+export async function getCleanerDateAvailability({
+  serviceName,
+  bookingDate,
+  bookingTime,
+  excludeBookingId,
+}: {
+  serviceName: string;
+  bookingDate: string;
+  bookingTime?: string;
+  excludeBookingId?: string;
+}): Promise<CleanerDateAvailability[]> {
+  const serviceSpecialty = serviceName as CleanerSpecialty;
+  const time = bookingTime?.slice(0, 5) || "00:00";
+  const cleaners = (await getCleaners()).filter(
+    (cleaner) =>
+      cleaner.active && cleaner.specialties.includes(serviceSpecialty)
+  );
 
-  const mappedCleaners = (cleaners ?? [])
-    .map(mapCleaner)
-    .filter((cleaner) => cleaner.specialties.includes(serviceName));
-
-  if (!mappedCleaners.length) {
+  if (!cleaners.length) {
     return [];
   }
 
-  const cleanerIds = mappedCleaners.map((cleaner) => cleaner.id);
-  const { data: availability, error: availabilityError } = await getSupabaseAdmin()
-    .from("cleaner_availability")
-    .select(
-      "id, cleaner_id, available_date, start_time, end_time, is_available, created_at"
-    )
-    .in("cleaner_id", cleanerIds)
-    .eq("available_date", booking.booking_date)
-    .eq("is_available", true);
+  const cleanerIds = cleaners.map((cleaner) => cleaner.id);
+  const [availabilityResult, assignmentsResult] = await Promise.all([
+    getSupabaseAdmin()
+      .from("cleaner_availability")
+      .select(
+        "id, cleaner_id, available_date, start_time, end_time, is_available, created_at"
+      )
+      .in("cleaner_id", cleanerIds)
+      .eq("available_date", bookingDate)
+      .eq("is_available", true),
+    getSupabaseAdmin()
+      .from("booking_assignments")
+      .select(`cleaner_id, bookings(${bookingSelect})`)
+      .in("cleaner_id", cleanerIds)
+      .neq("assignment_status", "Cancelled"),
+  ]);
 
-  if (availabilityError) {
-    throw toSupabaseError(availabilityError);
+  if (availabilityResult.error) {
+    throw toSupabaseError(availabilityResult.error);
   }
 
-  const availableCleanerIds = new Set(
-    (availability ?? [])
+  if (assignmentsResult.error) {
+    throw toSupabaseError(assignmentsResult.error);
+  }
+
+  const availableByCleaner = new Set(
+    (availabilityResult.data ?? [])
       .map(mapCleanerAvailability)
       .filter(
         (slot) =>
-          slot.start_time.slice(0, 5) <= bookingTime &&
-          slot.end_time.slice(0, 5) >= bookingTime
+          !bookingTime ||
+          (slot.start_time.slice(0, 5) <= time &&
+            slot.end_time.slice(0, 5) >= time)
       )
       .map((slot) => slot.cleaner_id)
   );
+  const busyByCleaner = new Set<string>();
 
-  return mappedCleaners.filter((cleaner) => availableCleanerIds.has(cleaner.id));
+  for (const assignment of assignmentsResult.data ?? []) {
+    const relatedBooking = Array.isArray(assignment.bookings)
+      ? assignment.bookings[0]
+      : assignment.bookings;
+
+    if (!relatedBooking) {
+      continue;
+    }
+
+    const booking = mapBookingWithService(relatedBooking);
+
+    if (
+      booking.id !== excludeBookingId &&
+      booking.booking_date === bookingDate &&
+      booking.status !== "Cancelled"
+    ) {
+      busyByCleaner.add(String(assignment.cleaner_id));
+    }
+  }
+
+  return cleaners.map((cleaner) => {
+    if (busyByCleaner.has(cleaner.id)) {
+      return { cleaner, status: "busy", reason: "Already booked on this date" };
+    }
+
+    if (!availableByCleaner.has(cleaner.id)) {
+      return { cleaner, status: "unavailable", reason: "No availability slot" };
+    }
+
+    return { cleaner, status: "available", reason: "Available" };
+  });
 }
 
 export async function getScheduleConflicts(
@@ -797,13 +851,32 @@ export async function getScheduleConflicts(
         item.scheduled_end_time > bookingStartTime
       );
     });
+  const sameDateBookings = (overlapResult.data ?? [])
+    .map((assignment) => {
+      const relatedBooking = Array.isArray(assignment.bookings)
+        ? assignment.bookings[0]
+        : assignment.bookings;
+      return relatedBooking ? mapBookingWithService(relatedBooking) : null;
+    })
+    .filter((item): item is BookingWithService => Boolean(item))
+    .filter(
+      (item) =>
+        item.id !== booking.id &&
+        item.booking_date === booking.booking_date &&
+        item.status !== "Cancelled"
+    );
 
   return {
     cleaner,
     overlappingBookings,
+    sameDateBookings,
     outsideAvailability: !hasAvailability,
     inactive: !cleaner.active,
-    canAssign: cleaner.active && hasAvailability && overlappingBookings.length === 0,
+    canAssign:
+      cleaner.active &&
+      hasAvailability &&
+      overlappingBookings.length === 0 &&
+      sameDateBookings.length === 0,
   };
 }
 
@@ -1283,6 +1356,14 @@ function mapInvoice(
     balance_due: Number(invoice.balance_due ?? 0),
     due_date: typeof invoice.due_date === "string" ? invoice.due_date : null,
     payment_link: typeof invoice.payment_link === "string" ? invoice.payment_link : null,
+    payment_reference:
+      typeof invoice.payment_reference === "string"
+        ? invoice.payment_reference
+        : null,
+    paystack_reference:
+      typeof invoice.paystack_reference === "string"
+        ? invoice.paystack_reference
+        : null,
     issued_at: typeof invoice.issued_at === "string" ? invoice.issued_at : null,
     paid_at: typeof invoice.paid_at === "string" ? invoice.paid_at : null,
     created_at: String(invoice.created_at ?? ""),

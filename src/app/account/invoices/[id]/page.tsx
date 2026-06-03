@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { initializeInvoicePaymentAction } from "@/app/actions";
 import { PrintButton } from "@/components/account/print-button";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { formatRand } from "@/lib/pricing";
@@ -45,6 +46,12 @@ export default async function AccountInvoiceDetailPage({
       </div>
 
       <InvoiceLayout invoice={invoice} />
+      {invoice.invoice_status !== "Paid" ? (
+        <form action={initializeInvoicePaymentAction} className="print:hidden">
+          <input type="hidden" name="invoice_id" value={invoice.id} />
+          <Button type="submit">Pay invoice</Button>
+        </form>
+      ) : null}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { verifyPaystackWebhookSignature } from "@/lib/paystack";
+import { verifyAndFinalizeInvoicePayment } from "@/lib/invoices";
 import {
   markPaystackReferenceFailed,
   verifyAndFinalizePayment,
@@ -41,7 +42,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (event.event === "charge.success") {
-    await verifyAndFinalizePayment(reference);
+    const payment = await verifyAndFinalizePayment(reference);
+
+    if (!payment.ok) {
+      await verifyAndFinalizeInvoicePayment(reference);
+    }
   }
 
   if (event.event === "charge.failed") {

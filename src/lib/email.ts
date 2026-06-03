@@ -6,6 +6,11 @@ type EmailResult = {
   error?: string;
 };
 
+type EmailAttachment = {
+  filename: string;
+  content: string;
+};
+
 export function hasEmailConfig() {
   return Boolean(process.env.RESEND_API_KEY && process.env.FROM_EMAIL);
 }
@@ -61,6 +66,34 @@ export async function sendInvoiceEmail(
     subject: `Shalean invoice ${invoice.invoice_number}`,
     html: invoiceEmailHtml(invoice),
     text: invoiceEmailText(invoice),
+    attachments: [
+      {
+        filename: `${invoice.invoice_number}.pdf`,
+        content: createInvoicePdfBase64(invoice),
+      },
+    ],
+  });
+}
+
+export async function sendInvoicePaymentConfirmationEmail(
+  invoice: Invoice
+): Promise<EmailResult> {
+  return sendEmail({
+    to: invoice.booking?.customer_email ?? invoice.customer?.email ?? "",
+    subject: `Payment received for invoice ${invoice.invoice_number}`,
+    html: layoutEmail(
+      "Payment received",
+      `
+        <p>Thank you. We have received payment for invoice ${escapeHtml(invoice.invoice_number)}.</p>
+        ${invoiceTable(invoice, invoice.booking ?? null)}
+      `
+    ),
+    text: [
+      `Payment received for invoice ${invoice.invoice_number}`,
+      "",
+      `Total paid: ${formatMoney(invoice.total)}`,
+      `Invoice status: ${invoice.invoice_status}`,
+    ].join("\n"),
   });
 }
 
@@ -69,11 +102,13 @@ async function sendEmail({
   subject,
   html,
   text,
+  attachments,
 }: {
   to: string;
   subject: string;
   html: string;
   text: string;
+  attachments?: EmailAttachment[];
 }): Promise<EmailResult> {
   if (!hasEmailConfig()) {
     return { sent: false, skipped: true };
@@ -91,6 +126,7 @@ async function sendEmail({
       subject,
       html,
       text,
+      ...(attachments?.length ? { attachments } : {}),
     }),
   });
 
@@ -273,6 +309,8 @@ function invoiceEmailHtml(invoice: Invoice) {
     `Invoice ${invoice.invoice_number}`,
     `
       <p>Your Shalean invoice is ready.</p>
+      <p><strong>Total due:</strong> ${formatMoney(invoice.balance_due || invoice.total)}</p>
+      <p><strong>Due date:</strong> ${escapeHtml(invoice.due_date ?? "Not set")}</p>
       ${invoiceTable(invoice, booking ?? null)}
       ${
         invoice.payment_link
@@ -422,6 +460,51 @@ function formatAddons(booking: BookingWithService) {
 
 function formatMoney(value: number) {
   return `R${value.toFixed(2)}`;
+}
+
+function createInvoicePdfBase64(invoice: Invoice) {
+  const lines = [
+    "Shalean Cleaning Services",
+    `Invoice ${invoice.invoice_number}`,
+    `Customer: ${invoice.booking?.customer_name ?? invoice.customer?.full_name ?? "Customer"}`,
+    `Total: ${formatMoney(invoice.total)}`,
+    `Balance due: ${formatMoney(invoice.balance_due)}`,
+    `Due date: ${invoice.due_date ?? "Not set"}`,
+    "",
+    ...invoice.line_items.map(
+      (item) => `${item.booking_date} ${item.service_type} ${formatMoney(item.amount)}`
+    ),
+  ];
+  const body = lines.map(escapePdfText).join("\\n");
+  const stream = `BT /F1 11 Tf 50 780 Td (${body}) Tj ET`;
+  const objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj",
+    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+    `5 0 obj << /Length ${stream.length} >> stream\n${stream}\nendstream endobj`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+
+  for (const object of objects) {
+    offsets.push(pdf.length);
+    pdf += `${object}\n`;
+  }
+
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("");
+  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return Buffer.from(pdf).toString("base64");
+}
+
+function escapePdfText(value: string) {
+  return value.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
 }
 
 function escapeHtml(value: string) {
