@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 
 import { sendAutomationEmail } from "@/lib/email";
 import { generateInvoiceForBooking } from "@/lib/invoices";
+import { getNextRecurringDate } from "@/lib/recurring-schedule";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
 import { getBookingById } from "@/lib/supabase/queries";
@@ -123,9 +124,10 @@ export async function generateDueRecurringBookings() {
       throw toSupabaseError(bookingError);
     }
 
-    const nextBookingDate = addFrequency(
+    const nextBookingDate = getNextRecurringDate(
       String(plan.next_booking_date),
-      plan.frequency as RecurringFrequency
+      plan.frequency as RecurringFrequency,
+      plan.preferred_day
     );
     const { error: updateError } = await getSupabaseAdmin()
       .from("recurring_bookings")
@@ -313,22 +315,6 @@ async function logAutomation({
   if (error) {
     throw toSupabaseError(error);
   }
-}
-
-function addFrequency(dateInput: string, frequency: RecurringFrequency) {
-  const date = new Date(`${dateInput}T00:00:00`);
-
-  if (frequency === "Weekly") {
-    return toDateInput(addDays(date, 7));
-  }
-
-  if (frequency === "Bi-weekly") {
-    return toDateInput(addDays(date, 14));
-  }
-
-  const next = new Date(date);
-  next.setMonth(next.getMonth() + 1);
-  return toDateInput(next);
 }
 
 function addDays(date: Date, days: number) {

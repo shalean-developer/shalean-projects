@@ -1563,6 +1563,7 @@ function normaliseServiceData(value: unknown): BookingServiceData {
         typeof data.preferredCleanerName === "string"
           ? data.preferredCleanerName
           : "",
+      recurringSetup: normaliseRecurringSetup(data.recurringSetup),
       questions: Array.isArray(data.questions)
         ? data.questions.map((question) => ({
             id: String(question.id),
@@ -1582,7 +1583,38 @@ function normaliseServiceData(value: unknown): BookingServiceData {
     cleanerSelectionType: "auto",
     preferredCleanerId: "",
     preferredCleanerName: "",
+    recurringSetup: null,
     questions: [],
+  };
+}
+
+function normaliseRecurringSetup(
+  value: unknown
+): BookingServiceData["recurringSetup"] {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const setup = value as Record<string, unknown>;
+  const frequency = setup.frequency;
+
+  if (
+    frequency !== "Weekly" &&
+    frequency !== "Bi-weekly" &&
+    frequency !== "Monthly"
+  ) {
+    return null;
+  }
+
+  return {
+    frequency,
+    preferredDay: String(setup.preferredDay ?? ""),
+    preferredTime: String(setup.preferredTime ?? ""),
+    firstBookingDate: String(setup.firstBookingDate ?? ""),
+    addressId:
+      typeof setup.addressId === "string" && setup.addressId
+        ? setup.addressId
+        : null,
   };
 }
 

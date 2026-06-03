@@ -183,6 +183,13 @@ export type BookingServiceData = {
   cleanerSelectionType?: "auto" | "preferred";
   preferredCleanerId?: string;
   preferredCleanerName?: string;
+  recurringSetup?: {
+    frequency: "Weekly" | "Bi-weekly" | "Monthly";
+    preferredDay: string;
+    preferredTime: string;
+    firstBookingDate: string;
+    addressId: string | null;
+  } | null;
   questions: {
     id: string;
     label: string;

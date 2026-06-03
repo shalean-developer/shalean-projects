@@ -1,16 +1,22 @@
 import { z } from "zod";
 
 import { getServiceBySlug } from "@/config/services";
+import {
+  normalizeRecurringFrequency,
+  recurringDays,
+} from "@/lib/recurring-schedule";
 import { paymentTypes } from "@/lib/types";
 
 const serviceValueSchema = z.union([z.string(), z.number()]);
 const cleanerSelectionTypes = ["auto", "preferred"] as const;
+const recurringDaySchema = z.enum(recurringDays);
 
 export const bookingWizardSchema = z
   .object({
     serviceSlug: z.string().min(1, "Choose a cleaning service."),
     serviceData: z.record(z.string(), serviceValueSchema),
     selectedAddons: z.array(z.string()),
+    recurringPreferredDays: z.array(recurringDaySchema),
     cleanerSelectionType: z.enum(cleanerSelectionTypes),
     preferredCleanerId: z.string().optional(),
     preferredCleanerName: z.string().optional(),
@@ -82,6 +88,24 @@ export const bookingWizardSchema = z
       }
     }
 
+    const frequencyQuestion = service.questions.find(
+      (question) => question.id === "cleaning_frequency"
+    );
+    const recurringFrequency = frequencyQuestion
+      ? normalizeRecurringFrequency(values.serviceData[frequencyQuestion.id])
+      : null;
+
+    if (
+      recurringFrequency === "Weekly" &&
+      !values.recurringPreferredDays.length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["recurringPreferredDays"],
+        message: "Choose at least one weekly day.",
+      });
+    }
+
     if (
       values.cleanerSelectionType === "preferred" &&
       !values.preferredCleanerId?.trim()
@@ -111,6 +135,7 @@ export const defaultBookingWizardValues: BookingWizardValues = {
   serviceSlug: "",
   serviceData: {},
   selectedAddons: [],
+  recurringPreferredDays: ["Monday"],
   cleanerSelectionType: "auto",
   preferredCleanerId: "",
   preferredCleanerName: "",
@@ -129,5 +154,5 @@ export const defaultBookingWizardValues: BookingWizardValues = {
   customerEmail: "",
   customerPhone: "",
   notes: "",
-  paymentType: "Deposit",
+  paymentType: "Full Payment",
 };

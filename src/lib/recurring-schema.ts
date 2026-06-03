@@ -1,8 +1,14 @@
 import { z } from "zod";
 
 import { getServiceBySlug } from "@/config/services";
+import {
+  formatPreferredDays,
+  recurringDays,
+} from "@/lib/recurring-schedule";
+import { paymentTypes } from "@/lib/types";
 
 const serviceValueSchema = z.union([z.string(), z.number()]);
+const recurringDaySchema = z.enum(recurringDays);
 
 export const recurringBookingSchema = z
   .object({
@@ -13,6 +19,7 @@ export const recurringBookingSchema = z
       error: "Choose a recurring frequency.",
     }),
     preferredDay: z.string().min(1, "Choose a preferred day."),
+    preferredDays: z.array(recurringDaySchema),
     preferredTime: z.string().min(1, "Choose a preferred time."),
     nextBookingDate: z.string().min(1, "Choose the first booking date."),
     selectedAddressId: z.string().optional(),
@@ -24,6 +31,9 @@ export const recurringBookingSchema = z
     accessInstructions: z.string().optional(),
     gateCode: z.string().optional(),
     parkingInstructions: z.string().optional(),
+    paymentType: z.enum(paymentTypes, {
+      error: "Choose a payment option.",
+    }),
   })
   .superRefine((values, ctx) => {
     const service = getServiceBySlug(values.serviceSlug);
@@ -35,6 +45,14 @@ export const recurringBookingSchema = z
         message: "Choose a valid cleaning service.",
       });
       return;
+    }
+
+    if (values.frequency === "Weekly" && !values.preferredDays.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["preferredDays"],
+        message: "Choose at least one weekly day.",
+      });
     }
 
     for (const question of service.questions) {
@@ -106,6 +124,7 @@ export const defaultRecurringBookingValues: RecurringBookingValues = {
   selectedAddons: [],
   frequency: "Weekly",
   preferredDay: "Monday",
+  preferredDays: ["Monday"],
   preferredTime: "09:00",
   nextBookingDate: "",
   selectedAddressId: "",
@@ -117,7 +136,18 @@ export const defaultRecurringBookingValues: RecurringBookingValues = {
   accessInstructions: "",
   gateCode: "",
   parkingInstructions: "",
+  paymentType: "Full Payment",
 };
+
+export function getRecurringPreferredDayLabel(values: {
+  frequency: "Weekly" | "Bi-weekly" | "Monthly";
+  preferredDay: string;
+  preferredDays: string[];
+}) {
+  return values.frequency === "Weekly"
+    ? formatPreferredDays(values.preferredDays)
+    : values.preferredDay;
+}
 
 export const reviewSchema = z.object({
   bookingId: z.string().uuid(),

@@ -72,7 +72,7 @@ export default async function AccountRecurringPage() {
           Create recurring plan
         </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          Select a service, repeat schedule, address, and review the estimate.
+          Select a service, repeat schedule, address, then pay securely before the plan is activated.
         </p>
       </div>
       <RecurringPlanForm services={services} savedAddresses={addresses} />

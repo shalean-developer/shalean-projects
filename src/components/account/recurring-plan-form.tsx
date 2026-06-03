@@ -9,10 +9,16 @@ import { createRecurringBooking } from "@/app/actions";
 import type { ServiceConfig, ServiceQuestion } from "@/config/services";
 import {
   defaultRecurringBookingValues,
+  getRecurringPreferredDayLabel,
   recurringBookingSchema,
   type RecurringBookingValues,
 } from "@/lib/recurring-schema";
 import { calculateEstimatedTotal, formatRand, getSelectedAddons } from "@/lib/pricing";
+import {
+  formatPreferredDays,
+  recurringDays,
+  recurringFrequencyOptions,
+} from "@/lib/recurring-schedule";
 import type { CustomerAddress } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,18 +34,6 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-
-const days = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-  "Sunday",
-];
-
-const frequencies = ["Weekly", "Bi-weekly", "Monthly"] as const;
 
 type RecurringPlanFormProps = {
   services: ServiceConfig[];
@@ -73,6 +67,10 @@ export function RecurringPlanForm({
     ) as Record<string, string | number>,
     selectedAddons: (watchedValues.selectedAddons ?? []).filter(
       (addonId): addonId is string => typeof addonId === "string"
+    ),
+    preferredDays: (watchedValues.preferredDays ?? ["Monday"]).filter(
+      (day): day is RecurringBookingValues["preferredDays"][number] =>
+        recurringDays.includes(day as RecurringBookingValues["preferredDays"][number])
     ),
   };
   const selectedService = useMemo(
@@ -110,7 +108,7 @@ export function RecurringPlanForm({
     startTransition(async () => {
       try {
         const result = await createRecurringBooking(valuesToSubmit);
-        window.location.assign(`/account/recurring/${result.id}`);
+        window.location.assign(result.authorizationUrl);
       } catch (error) {
         setIsSubmitting(false);
         setSubmitError(
@@ -253,7 +251,7 @@ export function RecurringPlanForm({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {frequencies.map((frequency) => (
+                      {recurringFrequencyOptions.map((frequency) => (
                         <SelectItem key={frequency} value={frequency}>
                           {frequency}
                         </SelectItem>
@@ -263,26 +261,45 @@ export function RecurringPlanForm({
                 )}
               />
             </Field>
-            <Field label="Preferred day" error={form.formState.errors.preferredDay?.message}>
-              <Controller
-                control={form.control}
-                name="preferredDay"
-                render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger className="h-10 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {days.map((day) => (
-                        <SelectItem key={day} value={day}>
-                          {day}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-            </Field>
+            {values.frequency === "Weekly" ? (
+              <div className="sm:col-span-2">
+                <Field
+                  label="Preferred days"
+                  error={form.formState.errors.preferredDays?.message}
+                >
+                  <PreferredDaysField
+                    value={values.preferredDays}
+                    onChange={(preferredDays) =>
+                      form.setValue("preferredDays", preferredDays, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+            ) : (
+              <Field label="Preferred day" error={form.formState.errors.preferredDay?.message}>
+                <Controller
+                  control={form.control}
+                  name="preferredDay"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {recurringDays.map((day) => (
+                          <SelectItem key={day} value={day}>
+                            {day}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </Field>
+            )}
             <Field label="Preferred time" error={form.formState.errors.preferredTime?.message}>
               <Input type="time" {...form.register("preferredTime")} />
             </Field>
@@ -378,7 +395,10 @@ export function RecurringPlanForm({
           <CardContent className="grid gap-4">
             <ReviewRow label="Service" value={selectedService?.name ?? "Choose a service"} />
             <ReviewRow label="Frequency" value={values.frequency} />
-            <ReviewRow label="Preferred day" value={values.preferredDay} />
+            <ReviewRow
+              label={values.frequency === "Weekly" ? "Preferred days" : "Preferred day"}
+              value={getRecurringPreferredDayLabel(values)}
+            />
             <ReviewRow label="Preferred time" value={values.preferredTime} />
             <ReviewRow label="First booking" value={values.nextBookingDate || "Choose a date"} />
             <Separator />
@@ -391,6 +411,8 @@ export function RecurringPlanForm({
               }
             />
             <ReviewRow label="Estimated price" value={formatRand(estimatedTotal)} />
+            <ReviewRow label="Payment option" value={values.paymentType} />
+            <ReviewRow label="Paystack due now" value={formatRand(estimatedTotal)} />
             <Button
               type="submit"
               size="lg"
@@ -400,10 +422,10 @@ export function RecurringPlanForm({
               {isSubmitting ? (
                 <>
                   <Loader2 className="animate-spin" />
-                  Creating
+                  Securing
                 </>
               ) : (
-                "Create recurring plan"
+                "Secure payment"
               )}
             </Button>
           </CardContent>
@@ -480,6 +502,51 @@ function QuestionField({
         })}
       />
     </Field>
+  );
+}
+
+function PreferredDaysField({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (value: RecurringBookingValues["preferredDays"]) => void;
+}) {
+  const selectedDays = value;
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2 sm:grid-cols-4">
+        {recurringDays.map((day) => {
+          const checked = selectedDays.includes(day);
+
+          return (
+            <button
+              key={day}
+              type="button"
+              className={cn(
+                "flex h-11 items-center justify-center rounded-lg border bg-card px-3 text-sm font-medium transition hover:border-primary/60",
+                checked && "border-primary bg-primary text-primary-foreground"
+              )}
+              onClick={() => {
+                const next = checked
+                  ? selectedDays.filter((selectedDay) => selectedDay !== day)
+                  : [...selectedDays, day];
+
+                onChange(next as RecurringBookingValues["preferredDays"]);
+              }}
+            >
+              {day.slice(0, 3)}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {selectedDays.length
+          ? formatPreferredDays(selectedDays)
+          : "Choose at least one day"}
+      </p>
+    </div>
   );
 }
 

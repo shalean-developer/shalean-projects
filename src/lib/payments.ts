@@ -7,6 +7,7 @@ import {
   initializePaystackTransaction,
   verifyPaystackTransaction,
 } from "@/lib/paystack";
+import { getNextRecurringDate } from "@/lib/recurring-schedule";
 import {
   sendBookingConfirmationEmail,
   sendPaymentReceiptEmail,
@@ -17,6 +18,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { toSupabaseError } from "@/lib/supabase/errors";
 import { getBookingById } from "@/lib/supabase/queries";
 import type {
+  BookingServiceData,
   BookingWithService,
   Payment,
   PaymentStatus,
@@ -126,6 +128,8 @@ export async function verifyAndFinalizePayment(
     payment.payment_status === "Deposit Paid" || payment.payment_status === "Paid";
 
   if (alreadyPaid) {
+    await activateRecurringPlanForBooking(payment.booking_id);
+
     return {
       ok: true,
       paymentStatus: payment.payment_status,
@@ -215,6 +219,10 @@ export async function verifyAndFinalizePayment(
     confirmed_at: new Date().toISOString(),
   });
 
+  const recurringPlanId = await activateRecurringPlanForBooking(
+    payment.booking_id
+  );
+
   revalidateBookingPaths(payment.booking_id);
 
   const updatedBooking = await getBookingById(payment.booking_id);
@@ -235,6 +243,15 @@ export async function verifyAndFinalizePayment(
           message: `${updatedBooking.service_name} is confirmed for ${updatedBooking.booking_date} at ${updatedBooking.booking_time.slice(0, 5)}.`,
           type: "Booking confirmed",
         }),
+        ...(recurringPlanId
+          ? [
+              createCustomerInAppNotification(updatedBooking.customer_id, {
+                title: "Recurring plan activated",
+                message: `${updatedBooking.service_name} will continue from your recurring schedule.`,
+                type: "Recurring plan activated",
+              }),
+            ]
+          : []),
       ]);
     }
   }
@@ -244,7 +261,9 @@ export async function verifyAndFinalizePayment(
     paymentStatus: nextPaymentStatus,
     booking: updatedBooking,
     payment: updatedPayment,
-    message: "Payment verified and booking confirmed.",
+    message: recurringPlanId
+      ? "Payment verified, first booking confirmed, and recurring plan activated."
+      : "Payment verified and booking confirmed.",
   };
 }
 
@@ -321,6 +340,140 @@ async function updateBookingPaymentFields(
   if (error) {
     throw toSupabaseError(error);
   }
+}
+
+async function activateRecurringPlanForBooking(bookingId: string) {
+  const booking = await getRecurringSetupBooking(bookingId);
+
+  if (
+    !booking ||
+    booking.recurring_booking_id ||
+    !booking.customer_id ||
+    !booking.recurringSetup
+  ) {
+    return null;
+  }
+
+  const nextBookingDate = getNextRecurringDate(
+    booking.recurringSetup.firstBookingDate || booking.booking_date,
+    booking.recurringSetup.frequency,
+    booking.recurringSetup.preferredDay
+  );
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("recurring_bookings")
+    .insert({
+      customer_id: booking.customer_id,
+      service_id: booking.service_id,
+      address_id: booking.recurringSetup.addressId,
+      frequency: booking.recurringSetup.frequency,
+      preferred_day: booking.recurringSetup.preferredDay,
+      preferred_time: booking.recurringSetup.preferredTime,
+      service_data: withoutRecurringSetup(booking.service_data),
+      selected_addons: booking.selected_addons,
+      estimated_price: booking.estimated_price,
+      status: "Active",
+      next_booking_date: nextBookingDate,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  const recurringPlanId = String(data.id);
+  await updateBookingPaymentFields(bookingId, {
+    recurring_booking_id: recurringPlanId,
+  });
+
+  revalidatePath("/account/recurring");
+  revalidatePath(`/account/recurring/${recurringPlanId}`);
+  revalidatePath("/admin/recurring");
+
+  return recurringPlanId;
+}
+
+async function getRecurringSetupBooking(bookingId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("bookings")
+    .select(
+      "id, booking_reference, recurring_booking_id, customer_id, service_id, booking_date, service_data, selected_addons, estimated_price"
+    )
+    .eq("id", bookingId)
+    .maybeSingle();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id: String(data.id ?? ""),
+    booking_reference: String(data.booking_reference ?? ""),
+    recurring_booking_id:
+      typeof data.recurring_booking_id === "string"
+        ? data.recurring_booking_id
+        : null,
+    customer_id: typeof data.customer_id === "string" ? data.customer_id : null,
+    service_id: String(data.service_id ?? ""),
+    booking_date: String(data.booking_date ?? ""),
+    service_data: data.service_data,
+    selected_addons: Array.isArray(data.selected_addons)
+      ? data.selected_addons
+      : [],
+    estimated_price: Number(data.estimated_price ?? 0),
+    recurringSetup: getRecurringSetup(data.service_data),
+  };
+}
+
+function getRecurringSetup(value: unknown): BookingServiceData["recurringSetup"] {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const setup = (value as { recurringSetup?: unknown }).recurringSetup;
+
+  if (!setup || typeof setup !== "object") {
+    return null;
+  }
+
+  const recurringSetup = setup as Record<string, unknown>;
+  const frequency = recurringSetup.frequency;
+
+  if (
+    frequency !== "Weekly" &&
+    frequency !== "Bi-weekly" &&
+    frequency !== "Monthly"
+  ) {
+    return null;
+  }
+
+  return {
+    frequency,
+    preferredDay: String(recurringSetup.preferredDay ?? ""),
+    preferredTime: String(recurringSetup.preferredTime ?? ""),
+    firstBookingDate: String(recurringSetup.firstBookingDate ?? ""),
+    addressId:
+      typeof recurringSetup.addressId === "string" &&
+      recurringSetup.addressId
+        ? recurringSetup.addressId
+        : null,
+  };
+}
+
+function withoutRecurringSetup(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const serviceData = { ...(value as Record<string, unknown>) };
+  delete serviceData.recurringSetup;
+
+  return serviceData;
 }
 
 async function sendConfirmationEmails(booking: BookingWithService) {

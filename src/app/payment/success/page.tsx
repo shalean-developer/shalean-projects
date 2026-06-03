@@ -50,7 +50,11 @@ export default async function PaymentSuccessPage({
           </div>
           <div className="grid gap-3">
             <h1 className="text-3xl font-semibold leading-tight tracking-normal sm:text-4xl">
-              {result.ok ? "Booking confirmed" : "Payment not confirmed"}
+              {result.ok
+                ? result.booking?.recurring_booking_id
+                  ? "Recurring plan activated"
+                  : "Booking confirmed"
+                : "Payment not confirmed"}
             </h1>
             <p className="mx-auto max-w-xl leading-7 text-muted-foreground">
               {result.message}
@@ -109,7 +113,9 @@ function PaymentDetails({ booking }: { booking: BookingWithService }) {
         label="Confirmation"
         value={
           booking.status === "Confirmed"
-            ? "A confirmation email has been prepared for the customer."
+            ? booking.recurring_booking_id
+              ? "The first booking is confirmed and the recurring plan is active."
+              : "A confirmation email has been prepared for the customer."
             : "Payment is still pending verification."
         }
       />

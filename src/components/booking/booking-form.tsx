@@ -7,18 +7,24 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
+  BrushCleaning,
   Building2,
+  Bubbles,
   CalendarCheck,
   Check,
   ChevronDown,
   ChevronUp,
+  Clock,
   CreditCard,
   Home,
   KeyRound,
+  ListChecks,
   Loader2,
   MapPin,
+  Minus,
   PackageOpen,
   Plus,
+  Search,
   ShieldCheck,
   Sparkles,
   Star,
@@ -35,34 +41,33 @@ import {
   type BookingWizardValues,
 } from "@/lib/booking-schema";
 import { calculateEstimatedTotal, formatRand, getSelectedAddons } from "@/lib/pricing";
+import {
+  formatPreferredDays,
+  normalizeRecurringFrequency,
+  recurringDays,
+  weekdayNameFromDate,
+} from "@/lib/recurring-schedule";
 import type { Cleaner, CustomerAddress, PaymentType } from "@/lib/types";
 import { useBookingWizardStore } from "@/stores/booking-wizard-store";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 const steps = [
   { slug: "service-selection", label: "Service" },
-  { slug: "service-details", label: "Cleaner" },
+  { slug: "service-details", label: "Details" },
   { slug: "cleaner-schedule", label: "Schedule" },
-  { slug: "address-contact", label: "Details" },
+  { slug: "address-contact", label: "Address" },
   { slug: "review-payment", label: "Checkout" },
 ];
 
 const stepFields: Record<number, (keyof BookingWizardValues)[]> = {
   0: ["serviceSlug"],
-  1: ["serviceData", "selectedAddons"],
+  1: ["serviceData", "selectedAddons", "recurringPreferredDays"],
   2: [
     "cleanerSelectionType",
     "preferredCleanerId",
@@ -93,9 +98,9 @@ const serviceIconMap = {
   "regular-cleaning": Home,
   "airbnb-cleaning": KeyRound,
   "office-cleaning": Building2,
-  "carpet-cleaning": Sparkles,
+  "carpet-cleaning": BrushCleaning,
   "moving-cleaning": PackageOpen,
-  "deep-cleaning": Sparkles,
+  "deep-cleaning": Bubbles,
 };
 
 const trustBadges = [
@@ -103,6 +108,58 @@ const trustBadges = [
   { label: "Flexible scheduling", icon: CalendarCheck },
   { label: "Secure payments", icon: CreditCard },
   { label: "Satisfaction guarantee", icon: BadgeCheck },
+];
+
+const timeOptions = Array.from({ length: 33 }, (_, index) => {
+  const totalMinutes = 6 * 60 + index * 30;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+});
+
+const suburbOptions = [
+  "Amanzimtoti",
+  "Arcadia",
+  "Ballito",
+  "Bedfordview",
+  "Bellville",
+  "Benoni",
+  "Bryanston",
+  "Centurion",
+  "Claremont",
+  "Constantia",
+  "Durban North",
+  "Edenvale",
+  "Fourways",
+  "Garsfontein",
+  "Goodwood",
+  "Green Point",
+  "Hatfield",
+  "Hillcrest",
+  "Kempton Park",
+  "Kloof",
+  "Lonehill",
+  "Menlyn",
+  "Midrand",
+  "Milnerton",
+  "Morningside",
+  "Newlands",
+  "Northcliff",
+  "Parkhurst",
+  "Pinelands",
+  "Randburg",
+  "Rosebank",
+  "Rondebosch",
+  "Sandton",
+  "Sea Point",
+  "Somerset West",
+  "Sunninghill",
+  "Table View",
+  "Umhlanga",
+  "Waterkloof",
+  "Westville",
+  "Woodstock",
 ];
 
 type BookingFormProps = {
@@ -158,6 +215,7 @@ export function BookingForm({
       customerName: storedValues.customerName || customer?.fullName || "",
       customerEmail: storedValues.customerEmail || customer?.email || "",
       customerPhone: storedValues.customerPhone || customer?.phone || "",
+      paymentType: "Full Payment",
     },
   });
 
@@ -170,11 +228,17 @@ export function BookingForm({
   const watchedSelectedAddons = (watchedValues.selectedAddons ?? []).filter(
     (addonId): addonId is string => typeof addonId === "string"
   );
+  const watchedRecurringPreferredDays = (
+    watchedValues.recurringPreferredDays ?? ["Monday"]
+  ).filter((day): day is BookingWizardValues["recurringPreferredDays"][number] =>
+    recurringDays.includes(day as BookingWizardValues["recurringPreferredDays"][number])
+  );
   const values: BookingWizardValues = {
     ...defaultBookingWizardValues,
     ...watchedValues,
     serviceData: watchedServiceData,
     selectedAddons: watchedSelectedAddons,
+    recurringPreferredDays: watchedRecurringPreferredDays,
     cleanerSelectionType: watchedValues.cleanerSelectionType ?? "auto",
   };
   const selectedService = useMemo(
@@ -206,6 +270,17 @@ export function BookingForm({
     ? calculateEstimatedTotal(selectedService, values.selectedAddons)
     : 0;
   const paymentSummary = getPaymentSummary(estimatedTotal, values.paymentType);
+  const recurringFrequency = normalizeRecurringFrequency(
+    values.serviceData.cleaning_frequency
+  );
+  const isRecurring = Boolean(recurringFrequency);
+  const recurringDayLabel =
+    recurringFrequency === "Weekly"
+      ? formatPreferredDays(values.recurringPreferredDays)
+      : values.bookingDate
+        ? weekdayNameFromDate(values.bookingDate)
+        : "Selected date";
+  const heroCopy = getStepHeroCopy(currentStep, selectedService, isRecurring);
   const preferredCleanerMissing =
     values.cleanerSelectionType === "preferred" &&
     Boolean(values.preferredCleanerId) &&
@@ -216,6 +291,32 @@ export function BookingForm({
       form.setValue("serviceSlug", services[0].slug);
     }
   }, [form, services, values.serviceSlug]);
+
+  useEffect(() => {
+    if (!selectedService) {
+      return;
+    }
+
+    const defaults = getDefaultServiceData(selectedService);
+    if (!Object.keys(defaults).length) {
+      return;
+    }
+
+    const current = form.getValues("serviceData");
+    const next = { ...current };
+    let changed = false;
+
+    for (const [key, value] of Object.entries(defaults)) {
+      if (next[key] === undefined || next[key] === "") {
+        next[key] = value;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      form.setValue("serviceData", next, { shouldValidate: false });
+    }
+  }, [form, selectedService]);
 
   useEffect(() => {
     if (!values.serviceSlug || typeof window === "undefined") {
@@ -243,17 +344,32 @@ export function BookingForm({
     }
   }, [form, values.cleanerSelectionType]);
 
+  useEffect(() => {
+    if (values.paymentType !== "Full Payment") {
+      form.setValue("paymentType", "Full Payment", {
+        shouldDirty: true,
+        shouldValidate: false,
+      });
+    }
+  }, [form, values.paymentType]);
+
   function chooseService(service: ServiceConfig) {
+    const serviceData = getDefaultServiceData(service);
+
     form.setValue("serviceSlug", service.slug, { shouldValidate: true });
-    form.setValue("serviceData", {}, { shouldValidate: true });
+    form.setValue("serviceData", serviceData, { shouldValidate: true });
     form.setValue("selectedAddons", [], { shouldValidate: true });
+    form.setValue("recurringPreferredDays", ["Monday"], {
+      shouldValidate: true,
+    });
     form.setValue("cleanerSelectionType", "auto", { shouldValidate: true });
     form.setValue("preferredCleanerId", "", { shouldValidate: true });
     form.setValue("preferredCleanerName", "", { shouldValidate: true });
     setStoredValues({
       serviceSlug: service.slug,
-      serviceData: {},
+      serviceData,
       selectedAddons: [],
+      recurringPreferredDays: ["Monday"],
       cleanerSelectionType: "auto",
       preferredCleanerId: "",
       preferredCleanerName: "",
@@ -320,7 +436,9 @@ export function BookingForm({
       try {
         const result = await createBooking(payload);
         resetStore();
-        window.location.assign(result.authorizationUrl);
+        window.location.assign(
+          result.recurringPlanUrl || result.authorizationUrl
+        );
       } catch (error) {
         setIsSubmitting(false);
         setSubmitError(
@@ -342,11 +460,10 @@ export function BookingForm({
       <section className="mx-auto grid w-full max-w-6xl gap-7 px-5 pb-8 pt-7 sm:px-8 sm:pb-10 sm:pt-9 lg:px-10 lg:pb-12">
         <div className="mx-auto max-w-3xl text-center">
           <h1 className="text-3xl font-bold leading-tight tracking-normal text-foreground sm:text-4xl lg:text-5xl">
-          What cleaning do you need?
+            {heroCopy.title}
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-          Choose the service that best fits your space.
-            
+            {heroCopy.description}
           </p>
         </div>
         <form
@@ -433,7 +550,7 @@ export function BookingForm({
         ) : null}
 
         {currentStep === 1 && selectedService ? (
-          <StepCard icon={Sparkles} title="Service Details">
+          <StepCard icon={ListChecks} title="Service Details" variant="plain">
             <div className="grid gap-5">
               <GroupedPanel title={selectedService.name}>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -447,6 +564,28 @@ export function BookingForm({
                     />
                   ))}
                 </div>
+                {recurringFrequency === "Weekly" ? (
+                  <div className="mt-4">
+                    <Field
+                      label="Weekly days"
+                      error={form.formState.errors.recurringPreferredDays?.message}
+                    >
+                      <PreferredDaysField
+                        value={values.recurringPreferredDays}
+                        onChange={(recurringPreferredDays) =>
+                          form.setValue(
+                            "recurringPreferredDays",
+                            recurringPreferredDays,
+                            {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            }
+                          )
+                        }
+                      />
+                    </Field>
+                  </div>
+                ) : null}
               </GroupedPanel>
               <GroupedPanel title="Add-ons">
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -458,13 +597,13 @@ export function BookingForm({
                         key={addon.id}
                         className={cn(
                           choiceCardClass,
-                          "flex min-h-24 cursor-pointer items-start gap-3 p-4",
+                          "flex min-h-24 cursor-pointer items-start justify-between gap-4 p-4",
                           checked && choiceCardSelectedClass
                         )}
                       >
                         <input
                           type="checkbox"
-                          className="mt-1 size-4 shrink-0 accent-primary"
+                          className="sr-only"
                           checked={checked}
                           onChange={() => {
                             const current = form.getValues("selectedAddons");
@@ -483,6 +622,20 @@ export function BookingForm({
                             {formatRand(addon.price)}
                           </span>
                         </span>
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "relative mt-0.5 h-7 w-12 shrink-0 rounded-full border border-border bg-muted transition",
+                            checked && "border-primary bg-primary"
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "absolute left-1 top-1 size-5 rounded-full bg-background shadow-sm transition",
+                              checked && "translate-x-5"
+                            )}
+                          />
+                        </span>
                       </label>
                     );
                   })}
@@ -494,7 +647,7 @@ export function BookingForm({
         ) : null}
 
         {currentStep === 2 ? (
-          <StepCard icon={UserCheck} title="Cleaner & Schedule">
+          <StepCard icon={UserCheck} title="Cleaner & Schedule" variant="plain">
             <div className="grid gap-5">
               <GroupedPanel title="Cleaner preference">
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -545,18 +698,34 @@ export function BookingForm({
 
               <GroupedPanel title="Schedule">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Booking date" error={form.formState.errors.bookingDate?.message}>
-                    <Input
-                      type="date"
-                      className={fieldControlClass}
-                      {...form.register("bookingDate")}
+                  <Field
+                    label={isRecurring ? "Start date" : "Booking date"}
+                    error={form.formState.errors.bookingDate?.message}
+                  >
+                    <Controller
+                      control={form.control}
+                      name="bookingDate"
+                      render={({ field }) => (
+                        <DatePickerField
+                          value={field.value}
+                          onChange={field.onChange}
+                        />
+                      )}
                     />
                   </Field>
-                  <Field label="Booking time" error={form.formState.errors.bookingTime?.message}>
-                    <Input
-                      type="time"
-                      className={fieldControlClass}
-                      {...form.register("bookingTime")}
+                  <Field
+                    label={isRecurring ? "Preferred time" : "Booking time"}
+                    error={form.formState.errors.bookingTime?.message}
+                  >
+                    <Controller
+                      control={form.control}
+                      name="bookingTime"
+                      render={({ field }) => (
+                        <TimePickerField
+                          value={field.value}
+                          onChange={field.onChange}
+                        />
+                      )}
                     />
                   </Field>
                 </div>
@@ -571,9 +740,9 @@ export function BookingForm({
         ) : null}
 
         {currentStep === 3 ? (
-          <StepCard icon={MapPin} title="Address & Contact">
+          <StepCard icon={MapPin} title="Address & Contact" variant="plain">
             <div className="grid gap-5">
-              <GroupedPanel title="Address">
+              <GroupedPanel title="Address" variant="plain">
                 <div className="grid gap-4">
                   {customer && savedAddresses.length ? (
                     <div className="grid gap-3">
@@ -620,7 +789,16 @@ export function BookingForm({
                   </Field>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Field label="Suburb" error={form.formState.errors.suburb?.message}>
-                      <Input className={fieldControlClass} {...form.register("suburb")} />
+                      <Controller
+                        control={form.control}
+                        name="suburb"
+                        render={({ field }) => (
+                          <SuburbSearchField
+                            value={field.value}
+                            onChange={field.onChange}
+                          />
+                        )}
+                      />
                     </Field>
                     <Field label="City" error={form.formState.errors.city?.message}>
                       <Input className={fieldControlClass} {...form.register("city")} />
@@ -668,7 +846,7 @@ export function BookingForm({
                 </div>
               </GroupedPanel>
 
-              <GroupedPanel title="Contact">
+              <GroupedPanel title="Contact" variant="plain">
                 <div className="grid gap-4">
                   <Field label="Customer name" error={form.formState.errors.customerName?.message}>
                     <Input
@@ -712,9 +890,15 @@ export function BookingForm({
           <StepCard icon={CreditCard} title="Review & Payment">
             <div className="grid gap-5">
               <div className="rounded-lg border border-primary/20 bg-primary/5 p-5 shadow-sm">
-                <p className="font-semibold">Ready for secure payment</p>
+                <p className="font-semibold">
+                  {isRecurring
+                    ? "Ready for secure recurring payment"
+                    : "Ready for secure payment"}
+                </p>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  The booking will be saved as Pending Payment and confirmed after Paystack verifies the transaction.
+                  {isRecurring
+                    ? "The first booking will be saved as Pending Payment, then the recurring plan starts after Paystack verifies the transaction."
+                    : "The booking will be saved as Pending Payment and confirmed after Paystack verifies the transaction."}
                 </p>
               </div>
               <BookingReview
@@ -722,6 +906,8 @@ export function BookingForm({
                 service={selectedService}
                 selectedAddons={selectedAddons}
                 estimatedTotal={estimatedTotal}
+                recurringFrequency={recurringFrequency}
+                recurringDayLabel={recurringDayLabel}
               />
               <PaymentSelection
                 paymentType={values.paymentType}
@@ -742,6 +928,7 @@ export function BookingForm({
         <WizardControls
           currentStep={currentStep}
           isSubmitting={isSubmitting}
+          submitLabel="Secure Payment"
           onBack={goBack}
           onNext={goNext}
         />
@@ -1046,15 +1233,26 @@ function EstimateContent({
 function StepCard({
   icon: Icon,
   title,
+  variant = "card",
   children,
 }: {
   icon: typeof Sparkles;
   title: string;
+  variant?: "card" | "plain";
   children: React.ReactNode;
 }) {
+  const plain = variant === "plain";
+
   return (
-    <Card className="rounded-lg border border-border/80 bg-card shadow-sm">
-      <CardHeader className="px-5 pt-5">
+    <Card
+      className={cn(
+        "rounded-lg",
+        plain
+          ? "overflow-visible border-0 bg-transparent py-0 shadow-none ring-0"
+          : "border border-border/80 bg-card shadow-sm"
+      )}
+    >
+      <CardHeader className={cn(plain ? "px-0 pt-0" : "px-5 pt-5")}>
         <div className="flex items-center gap-2">
           <span className="grid size-8 place-items-center rounded-full bg-primary/10 text-primary">
             <Icon className="size-5" />
@@ -1062,20 +1260,33 @@ function StepCard({
           <CardTitle className="text-lg">{title}</CardTitle>
         </div>
       </CardHeader>
-      <CardContent className="px-5 pb-5">{children}</CardContent>
+      <CardContent className={cn(plain ? "px-0 pb-0" : "px-5 pb-5")}>
+        {children}
+      </CardContent>
     </Card>
   );
 }
 
 function GroupedPanel({
   title,
+  variant = "card",
   children,
 }: {
   title: string;
+  variant?: "card" | "plain";
   children: React.ReactNode;
 }) {
+  const plain = variant === "plain";
+
   return (
-    <section className="rounded-lg border border-border/80 bg-background p-4 shadow-sm">
+    <section
+      className={cn(
+        "rounded-lg",
+        plain
+          ? "border-0 bg-transparent p-0 shadow-none"
+          : "border border-border/80 bg-background p-4 shadow-sm"
+      )}
+    >
       <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </h3>
@@ -1098,36 +1309,51 @@ function QuestionField({
   const error = errors.serviceData?.[question.id]?.message?.toString();
   const fieldName = `serviceData.${question.id}` as const;
 
-  if (question.type === "select") {
+  if (question.type === "number") {
     return (
       <Field label={question.label} error={error}>
         <Controller
           control={control}
           name={fieldName}
           render={({ field }) => (
-            <Select
-              value={typeof field.value === "string" ? field.value : ""}
-              onValueChange={field.onChange}
-            >
-              <SelectTrigger
-                className={cn(
-                  fieldControlClass,
-                  "w-full bg-card shadow-sm focus-visible:border-primary/70 focus-visible:ring-primary/20"
-                )}
-              >
-                <SelectValue placeholder="Choose an option" />
-              </SelectTrigger>
-              <SelectContent>
-                {question.options?.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <NumberStepper
+              value={Number(field.value ?? getQuestionDefaultValue(question) ?? 0)}
+              min={0}
+              onChange={field.onChange}
+            />
           )}
         />
       </Field>
+    );
+  }
+
+  if (question.type === "select" && question.options?.length) {
+    return (
+      <div className="sm:col-span-2">
+        <Field label={question.label} error={error}>
+          <Controller
+            control={control}
+            name={fieldName}
+            render={({ field }) => (
+              <SegmentedChoice
+                value={typeof field.value === "string" ? field.value : ""}
+                options={question.options ?? []}
+                onChange={field.onChange}
+              />
+            )}
+          />
+        </Field>
+      </div>
+    );
+  }
+
+  if (question.type === "select") {
+    return (
+      <div className="sm:col-span-2">
+        <Field label={question.label} error={error}>
+          <FieldError message="No options are configured for this question." />
+        </Field>
+      </div>
     );
   }
 
@@ -1145,18 +1371,482 @@ function QuestionField({
     );
   }
 
+  if (question.type === "time") {
+    return (
+      <Field label={question.label} error={error}>
+        <Controller
+          control={control}
+          name={fieldName}
+          render={({ field }) => (
+            <TimePickerField
+              value={typeof field.value === "string" ? field.value : ""}
+              onChange={field.onChange}
+            />
+          )}
+        />
+      </Field>
+    );
+  }
+
   return (
     <Field label={question.label} error={error}>
       <Input
-        type={question.type === "number" ? "number" : question.type}
-        min={question.type === "number" ? 0 : undefined}
+        type={question.type}
         placeholder={question.placeholder}
         className={fieldControlClass}
-        {...register(fieldName, {
-          valueAsNumber: question.type === "number",
-        })}
+        {...register(fieldName)}
       />
     </Field>
+  );
+}
+
+function PreferredDaysField({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (value: BookingWizardValues["recurringPreferredDays"]) => void;
+}) {
+  const selectedDays = value;
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2 sm:grid-cols-4">
+        {recurringDays.map((day) => {
+          const selected = selectedDays.includes(day);
+
+          return (
+            <button
+              key={day}
+              type="button"
+              className={cn(
+                "flex h-11 items-center justify-center rounded-lg border border-border/80 bg-card px-3 text-sm font-bold shadow-sm transition hover:border-primary/50 hover:bg-primary/5",
+                selected &&
+                  "border-primary bg-primary text-primary-foreground shadow-[0_10px_20px_rgba(8,105,62,0.16)]"
+              )}
+              onClick={() => {
+                const next = selected
+                  ? selectedDays.filter((selectedDay) => selectedDay !== day)
+                  : [...selectedDays, day];
+
+                onChange(next as BookingWizardValues["recurringPreferredDays"]);
+              }}
+            >
+              {day.slice(0, 3)}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-sm leading-6 text-muted-foreground">
+        {selectedDays.length
+          ? formatPreferredDays(selectedDays)
+          : "Choose at least one day"}
+      </p>
+    </div>
+  );
+}
+
+function TimePickerField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        className={cn(
+          fieldControlClass,
+          "flex w-full items-center justify-between gap-3 border border-input bg-card text-left text-sm font-medium"
+        )}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Clock className="size-4 shrink-0 text-primary" />
+          <span className={cn(!value && "text-muted-foreground")}>
+            {value ? formatTimeLabel(value) : "Choose a time"}
+          </span>
+        </span>
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-muted-foreground transition", open && "rotate-180")}
+        />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-60 overflow-y-auto rounded-lg border border-border/80 bg-popover p-2 shadow-lg">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {timeOptions.map((option) => {
+              const selected = value === option;
+
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  className={cn(
+                    "rounded-md border border-border/70 bg-card px-3 py-2 text-sm font-semibold transition hover:border-primary/50 hover:bg-primary/5",
+                    selected && "border-primary bg-primary text-primary-foreground"
+                  )}
+                  onClick={() => {
+                    onChange(option);
+                    setOpen(false);
+                  }}
+                >
+                  {formatTimeLabel(option)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SuburbSearchField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredSuburbs = suburbOptions
+    .filter((suburb) => suburb.toLowerCase().includes(normalizedQuery))
+    .slice(0, 8);
+  const showCustomOption =
+    query.trim().length >= 2 &&
+    !suburbOptions.some(
+      (suburb) => suburb.toLowerCase() === normalizedQuery
+    );
+
+  function selectSuburb(suburb: string) {
+    onChange(suburb);
+    setQuery(suburb);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        className={cn(
+          fieldControlClass,
+          "flex w-full items-center justify-between gap-3 border border-input bg-card text-left text-sm font-medium"
+        )}
+        onClick={() => {
+          setQuery(value);
+          setOpen((current) => !current);
+        }}
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <MapPin className="size-4 shrink-0 text-primary" />
+          <span className={cn("truncate", !value && "text-muted-foreground")}>
+            {value || "Search suburb"}
+          </span>
+        </span>
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-muted-foreground transition", open && "rotate-180")}
+        />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-lg border border-border/80 bg-popover p-2 shadow-lg">
+          <div className="flex h-11 items-center gap-2 rounded-md border border-input bg-card px-3">
+            <Search className="size-4 shrink-0 text-muted-foreground" />
+            <input
+              autoFocus
+              value={query}
+              placeholder="Search suburb"
+              className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none placeholder:text-muted-foreground"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && query.trim()) {
+                  event.preventDefault();
+                  selectSuburb(filteredSuburbs[0] ?? query.trim());
+                }
+              }}
+            />
+          </div>
+          <div className="mt-2 grid max-h-60 gap-1 overflow-y-auto">
+            {filteredSuburbs.map((suburb) => {
+              const selected = value === suburb;
+
+              return (
+                <button
+                  key={suburb}
+                  type="button"
+                  className={cn(
+                    "flex items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm font-semibold transition hover:bg-primary/5",
+                    selected && "bg-primary/10 text-primary"
+                  )}
+                  onClick={() => selectSuburb(suburb)}
+                >
+                  <span>{suburb}</span>
+                  {selected ? <Check className="size-4" /> : null}
+                </button>
+              );
+            })}
+            {showCustomOption ? (
+              <button
+                type="button"
+                className="rounded-md border border-dashed border-primary/40 px-3 py-2 text-left text-sm font-semibold text-primary transition hover:bg-primary/5"
+                onClick={() => selectSuburb(query.trim())}
+              >
+                Use &quot;{query.trim()}&quot;
+              </button>
+            ) : null}
+            {!filteredSuburbs.length && !showCustomOption ? (
+              <p className="px-3 py-2 text-sm text-muted-foreground">
+                Type at least 2 characters to add a suburb.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DatePickerField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const selectedDate = parseDateValue(value);
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const baseDate = selectedDate ?? new Date();
+    return new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
+  });
+  const calendarDays = useMemo(
+    () => getCalendarDays(visibleMonth),
+    [visibleMonth]
+  );
+
+  function moveMonth(offset: number) {
+    setVisibleMonth(
+      (current) => new Date(current.getFullYear(), current.getMonth() + offset, 1)
+    );
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        className={cn(
+          fieldControlClass,
+          "flex w-full items-center justify-between gap-3 border border-input bg-card text-left text-sm font-medium"
+        )}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <CalendarCheck className="size-4 shrink-0 text-primary" />
+          <span className={cn(!value && "text-muted-foreground")}>
+            {selectedDate ? formatDateLabel(selectedDate) : "Choose a date"}
+          </span>
+        </span>
+        <ChevronDown
+          className={cn("size-4 shrink-0 text-muted-foreground transition", open && "rotate-180")}
+        />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-lg border border-border/80 bg-popover p-3 shadow-lg">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              aria-label="Previous month"
+              className="grid size-9 place-items-center rounded-md border border-border/70 bg-card text-primary transition hover:bg-primary/5"
+              onClick={() => moveMonth(-1)}
+            >
+              <ArrowLeft className="size-4" />
+            </button>
+            <p className="text-sm font-semibold">
+              {visibleMonth.toLocaleDateString("en-ZA", {
+                month: "long",
+                year: "numeric",
+              })}
+            </p>
+            <button
+              type="button"
+              aria-label="Next month"
+              className="grid size-9 place-items-center rounded-md border border-border/70 bg-card text-primary transition hover:bg-primary/5"
+              onClick={() => moveMonth(1)}
+            >
+              <ArrowRight className="size-4" />
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-7 gap-1 text-center text-xs font-semibold text-muted-foreground">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+              <span key={day}>{day}</span>
+            ))}
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-1">
+            {calendarDays.map((day) => {
+              const dateValue = formatDateValue(day.date);
+              const selected = value === dateValue;
+
+              return (
+                <button
+                  key={dateValue}
+                  type="button"
+                  className={cn(
+                    "grid aspect-square place-items-center rounded-md border border-transparent text-sm font-semibold transition hover:border-primary/40 hover:bg-primary/5",
+                    !day.currentMonth && "text-muted-foreground/45",
+                    selected && "border-primary bg-primary text-primary-foreground"
+                  )}
+                  onClick={() => {
+                    onChange(dateValue);
+                    setOpen(false);
+                  }}
+                >
+                  {day.date.getDate()}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatTimeLabel(value: string) {
+  const [hourValue, minuteValue] = value.split(":").map(Number);
+
+  if (!Number.isFinite(hourValue) || !Number.isFinite(minuteValue)) {
+    return value;
+  }
+
+  const suffix = hourValue >= 12 ? "PM" : "AM";
+  const hour = hourValue % 12 || 12;
+
+  return `${hour}:${String(minuteValue).padStart(2, "0")} ${suffix}`;
+}
+
+function parseDateValue(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+}
+
+function formatDateValue(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function formatDateLabel(date: Date) {
+  return date.toLocaleDateString("en-ZA", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getCalendarDays(month: Date) {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const startDate = new Date(firstDay);
+  startDate.setDate(firstDay.getDate() - startOffset);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + index);
+
+    return {
+      date,
+      currentMonth: date.getMonth() === month.getMonth(),
+    };
+  });
+}
+
+function NumberStepper({
+  value,
+  min,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  onChange: (value: number) => void;
+}) {
+  const normalizedValue = Number.isFinite(value) ? value : min;
+
+  return (
+    <div className="grid h-12 grid-cols-[44px_minmax(0,1fr)_44px] overflow-hidden rounded-lg border border-border/80 bg-card shadow-sm">
+      <button
+        type="button"
+        aria-label="Decrease value"
+        className="grid place-items-center border-r border-border/80 text-primary transition hover:bg-primary/5 disabled:cursor-not-allowed disabled:text-muted-foreground"
+        disabled={normalizedValue <= min}
+        onClick={() => onChange(Math.max(min, normalizedValue - 1))}
+      >
+        <Minus className="size-4" />
+      </button>
+      <span className="grid place-items-center text-lg font-semibold tabular-nums">
+        {normalizedValue}
+      </span>
+      <button
+        type="button"
+        aria-label="Increase value"
+        className="grid place-items-center border-l border-border/80 text-primary transition hover:bg-primary/5"
+        onClick={() => onChange(normalizedValue + 1)}
+      >
+        <Plus className="size-4" />
+      </button>
+    </div>
+  );
+}
+
+function SegmentedChoice({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-4">
+      {options.map((option) => {
+        const selected = value === option;
+
+        return (
+          <button
+            key={option}
+            type="button"
+            onClick={() => onChange(option)}
+            className={cn(
+              choiceCardClass,
+              "grid min-h-14 place-items-center px-3 py-3 text-center text-sm font-semibold",
+              selected && choiceCardSelectedClass
+            )}
+          >
+            {option}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1330,7 +2020,6 @@ function PaymentSelection({
   estimatedTotal: number;
   onChange: (paymentType: PaymentType) => void;
 }) {
-  const deposit = getPaymentSummary(estimatedTotal, "Deposit");
   const full = getPaymentSummary(estimatedTotal, "Full Payment");
 
   return (
@@ -1339,14 +2028,7 @@ function PaymentSelection({
         <CreditCard className="size-4 text-primary" />
         <p className="font-semibold">Payment option</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <PaymentOption
-          checked={paymentType === "Deposit"}
-          title="Pay Deposit"
-          description={`Pay ${formatRand(deposit.amountDue)} now`}
-          meta={`Balance due after deposit: ${formatRand(deposit.balanceDue)}`}
-          onClick={() => onChange("Deposit")}
-        />
+      <div className="grid gap-4">
         <PaymentOption
           checked={paymentType === "Full Payment"}
           title="Pay Full Amount"
@@ -1416,15 +2098,10 @@ function PaymentBreakdown({
     <ReviewSection
       title="Payment"
       items={[
-        ["Payment option", paymentType],
+        ["Payment option", "Full Payment"],
         ["Estimated total", formatRand(summary.estimatedTotal)],
-        [
-          "Deposit amount",
-          formatRand(getPaymentSummary(estimatedTotal, "Deposit").amountDue),
-        ],
         ["Full payment amount", formatRand(estimatedTotal)],
         ["Amount due now", formatRand(summary.amountDue)],
-        ["Balance due after payment", formatRand(summary.balanceDue)],
       ]}
     />
   );
@@ -1435,12 +2112,31 @@ function BookingReview({
   service,
   selectedAddons,
   estimatedTotal,
+  recurringFrequency,
+  recurringDayLabel,
 }: {
   values: BookingWizardValues;
   service: ServiceConfig;
   selectedAddons: ReturnType<typeof getSelectedAddons>;
   estimatedTotal: number;
+  recurringFrequency: ReturnType<typeof normalizeRecurringFrequency>;
+  recurringDayLabel: string;
 }) {
+  const scheduleItems: [string, string][] = recurringFrequency
+    ? [
+        ["Frequency", recurringFrequency],
+        [
+          recurringFrequency === "Weekly" ? "Preferred days" : "Preferred day",
+          recurringDayLabel,
+        ],
+        ["Start date", values.bookingDate],
+        ["Preferred time", values.bookingTime],
+      ]
+    : [
+        ["Date", values.bookingDate],
+        ["Time", values.bookingTime],
+      ];
+
   return (
     <div className="grid gap-5">
       <ReviewSection
@@ -1473,10 +2169,7 @@ function BookingReview({
       />
       <ReviewSection
         title="Schedule"
-        items={[
-          ["Date", values.bookingDate],
-          ["Time", values.bookingTime],
-        ]}
+        items={scheduleItems}
       />
       <ReviewSection
         title="Address"
@@ -1565,6 +2258,71 @@ function getInitialStepIndex(initialStepSlug: string | undefined, storedStep: nu
   return stepIndex >= 0 ? stepIndex : 0;
 }
 
+function getStepHeroCopy(
+  currentStep: number,
+  selectedService?: ServiceConfig,
+  isRecurring = false
+) {
+  if (currentStep === 1 && selectedService) {
+    return {
+      title: `${selectedService.name} details`,
+      description: "Set the room count, frequency, and extras for this service.",
+    };
+  }
+
+  if (currentStep === 2) {
+    return {
+      title: "Choose your schedule",
+      description: "Pick how you want Shalean to match your cleaner and time.",
+    };
+  }
+
+  if (currentStep === 3) {
+    return {
+      title: "Where should we clean?",
+      description: "Add the address and contact details for the booking.",
+    };
+  }
+
+  if (currentStep === 4) {
+    return {
+      title: isRecurring ? "Review and pay" : "Review and pay",
+      description: isRecurring
+        ? "Confirm the recurring schedule before secure checkout."
+        : "Confirm your booking details before secure checkout.",
+    };
+  }
+
+  return {
+    title: "What cleaning do you need?",
+    description: "Choose the service that best fits your space.",
+  };
+}
+
+function getDefaultServiceData(service: ServiceConfig) {
+  return service.questions.reduce<Record<string, number>>((defaults, question) => {
+    const defaultValue = getQuestionDefaultValue(question);
+
+    if (defaultValue !== undefined) {
+      defaults[question.id] = defaultValue;
+    }
+
+    return defaults;
+  }, {});
+}
+
+function getQuestionDefaultValue(question: ServiceQuestion) {
+  if (question.id === "bedrooms") {
+    return 2;
+  }
+
+  if (question.id === "bathrooms" || question.id === "number_of_bathrooms") {
+    return 1;
+  }
+
+  return undefined;
+}
+
 function getPaymentSummary(estimatedTotal: number, paymentType: PaymentType) {
   const normalizedTotal = Math.round(estimatedTotal * 100) / 100;
   const amountDue =
@@ -1585,11 +2343,13 @@ function getPaymentSummary(estimatedTotal: number, paymentType: PaymentType) {
 function WizardControls({
   currentStep,
   isSubmitting,
+  submitLabel,
   onBack,
   onNext,
 }: {
   currentStep: number;
   isSubmitting: boolean;
+  submitLabel: string;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -1623,7 +2383,7 @@ function WizardControls({
               </>
             ) : (
               <>
-                Secure Payment
+                {submitLabel}
                 <ArrowRight className="size-4" />
               </>
             )}
@@ -1633,7 +2393,11 @@ function WizardControls({
             type="button"
             size="lg"
             className="h-12 flex-1 gap-2 bg-primary px-6 text-base font-bold shadow-[0_12px_24px_rgba(8,105,62,0.18)] hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 lg:flex-none"
-            onClick={onNext}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onNext();
+            }}
           >
             Next
             <ArrowRight className="size-4" />

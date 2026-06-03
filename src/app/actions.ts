@@ -28,7 +28,7 @@ import {
   requireCustomer,
   requireUser,
 } from "@/lib/auth";
-import { getServiceBySlug } from "@/config/services";
+import { getServiceBySlug, type ServiceConfig } from "@/config/services";
 import { bookingWizardSchema, type BookingWizardValues } from "@/lib/booking-schema";
 import { generateInvoiceForBooking, sendInvoiceAndLog, updateInvoiceStatus } from "@/lib/invoices";
 import { calculatePaymentAmount } from "@/lib/paystack";
@@ -52,6 +52,7 @@ import {
 } from "@/lib/supabase/queries";
 import {
   invoiceStatusSchema,
+  getRecurringPreferredDayLabel,
   recurringBookingSchema,
   recurringChangeRequestSchema,
   recurringStatusSchema,
@@ -59,11 +60,18 @@ import {
   type RecurringBookingValues,
 } from "@/lib/recurring-schema";
 import {
+  formatPreferredDays,
+  getFirstRecurringDate,
+  normalizeRecurringFrequency,
+  weekdayNameFromDate,
+} from "@/lib/recurring-schedule";
+import {
   bookingStatuses,
   recurringBookingStatuses,
   jobStatuses,
   type BookingStatus,
   type JobStatus,
+  type PaymentType,
   payrollStatuses,
   supportPriorities,
   supportTicketStatuses,
@@ -72,8 +80,45 @@ import {
   type SupportTicketStatus,
 } from "@/lib/types";
 
+type RecurringPaymentSetup = {
+  frequency: "Weekly" | "Bi-weekly" | "Monthly";
+  preferredDay: string;
+  preferredTime: string;
+  firstBookingDate: string;
+  addressId: string | null;
+};
+
+type PendingBookingInput = {
+  bookingReference: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  customerId: string | null;
+  serviceId: string;
+  address: string;
+  suburb: string;
+  city: string;
+  bookingDate: string;
+  bookingTime: string;
+  notes: string | null;
+  service: ServiceConfig;
+  serviceData: Record<string, string | number>;
+  selectedAddons: ReturnType<typeof getSelectedAddons>;
+  estimatedTotal: number;
+  paymentType: PaymentType;
+  cleanerSelectionType?: "auto" | "preferred";
+  preferredCleaner?: {
+    preferredCleanerId: string;
+    preferredCleanerName: string;
+  };
+  recurringSetup?: RecurringPaymentSetup;
+};
+
 export async function createBooking(values: BookingWizardValues) {
-  const parsed = bookingWizardSchema.safeParse(values);
+  const parsed = bookingWizardSchema.safeParse({
+    ...values,
+    recurringPreferredDays: values.recurringPreferredDays ?? ["Monday"],
+  });
 
   if (!parsed.success) {
     throw new Error("Please complete all required booking details.");
@@ -89,6 +134,7 @@ export async function createBooking(values: BookingWizardValues) {
   const selectedAddons = getSelectedAddons(service, parsed.data.selectedAddons);
   const bookingReference = createBookingReference();
   const account = await getOptionalCustomer();
+  const recurringFrequency = getBookingRecurringFrequency(parsed.data);
   const estimatedTotal = calculateEstimatedTotal(
     service,
     parsed.data.selectedAddons
@@ -108,6 +154,78 @@ export async function createBooking(values: BookingWizardValues) {
           preferredCleanerId: "",
           preferredCleanerName: "",
         };
+
+  if (recurringFrequency) {
+    if (!account?.customer) {
+      throw new Error("Please log in before creating a recurring cleaning plan.");
+    }
+
+    const addressId = await saveRecurringAddressFromBooking(
+      account.customer.id,
+      parsed.data
+    );
+    const preferredDay =
+      recurringFrequency === "Weekly"
+        ? formatPreferredDays(parsed.data.recurringPreferredDays)
+        : weekdayNameFromDate(parsed.data.bookingDate);
+    const firstBookingDate = getFirstRecurringDate(
+      parsed.data.bookingDate,
+      recurringFrequency,
+      preferredDay
+    );
+    const createdBooking = await createPendingBookingForPayment({
+      bookingReference,
+      customerName: parsed.data.customerName,
+      customerEmail: parsed.data.customerEmail,
+      customerPhone: parsed.data.customerPhone,
+      customerId: account.customer.id,
+      serviceId: databaseService.id,
+      address: parsed.data.address,
+      suburb: parsed.data.suburb,
+      city: parsed.data.city,
+      bookingDate: firstBookingDate,
+      bookingTime: parsed.data.bookingTime,
+      notes: parsed.data.notes?.trim() ? parsed.data.notes.trim() : null,
+      service,
+      serviceData: parsed.data.serviceData,
+      selectedAddons,
+      estimatedTotal,
+      paymentType: parsed.data.paymentType,
+      cleanerSelectionType,
+      preferredCleaner,
+      recurringSetup: {
+        frequency: recurringFrequency,
+        preferredDay,
+        preferredTime: parsed.data.bookingTime,
+        firstBookingDate,
+        addressId,
+      },
+    });
+    const payment = await initializeBookingPayment(
+      createdBooking,
+      parsed.data.paymentType
+    );
+
+    revalidatePath("/account");
+    revalidatePath("/account/bookings");
+    revalidatePath("/admin/bookings");
+
+    if (account.customer.user_id) {
+      await createNotification({
+        userId: account.customer.user_id,
+        userRole: "customer",
+        title: "Recurring payment started",
+        message: `${service.name} will repeat ${recurringFrequency.toLowerCase()} after Paystack confirms payment.`,
+        type: "New booking",
+      });
+    }
+
+    return {
+      bookingReference,
+      authorizationUrl: payment.authorizationUrl,
+      recurringPlanUrl: "",
+    };
+  }
 
   const booking = {
     booking_reference: bookingReference,
@@ -196,12 +314,16 @@ export async function createBooking(values: BookingWizardValues) {
   return {
     bookingReference,
     authorizationUrl: payment.authorizationUrl,
+    recurringPlanUrl: "",
   };
 }
 
 export async function createRecurringBooking(values: RecurringBookingValues) {
   const { customer } = await requireCustomer("/account/recurring");
-  const parsed = recurringBookingSchema.safeParse(values);
+  const parsed = recurringBookingSchema.safeParse({
+    ...values,
+    preferredDays: values.preferredDays ?? ["Monday"],
+  });
 
   if (!parsed.success) {
     throw new Error("Please complete all required recurring plan details.");
@@ -223,41 +345,53 @@ export async function createRecurringBooking(values: RecurringBookingValues) {
     parsed.data.selectedAddressId ||
     (await saveRecurringAddress(customer.id, parsed.data));
 
-  const { data, error } = await getSupabaseAdmin()
-    .from("recurring_bookings")
-    .insert({
-      customer_id: customer.id,
-      service_id: databaseService.id,
-      address_id: addressId || null,
+  const preferredDay = getRecurringPreferredDayLabel(parsed.data);
+  const firstBookingDate = getFirstRecurringDate(
+    parsed.data.nextBookingDate,
+    parsed.data.frequency,
+    preferredDay
+  );
+  const bookingReference = createBookingReference();
+  const createdBooking = await createPendingBookingForPayment({
+    bookingReference,
+    customerName: customer.full_name,
+    customerEmail: customer.email,
+    customerPhone: customer.phone ?? "",
+    customerId: customer.id,
+    serviceId: databaseService.id,
+    address: parsed.data.address,
+    suburb: parsed.data.suburb,
+    city: parsed.data.city,
+    bookingDate: firstBookingDate,
+    bookingTime: parsed.data.preferredTime,
+    notes: "Recurring cleaning plan setup.",
+    service,
+    serviceData: parsed.data.serviceData,
+    selectedAddons,
+    estimatedTotal,
+    paymentType: parsed.data.paymentType,
+    recurringSetup: {
       frequency: parsed.data.frequency,
-      preferred_day: parsed.data.preferredDay,
-      preferred_time: parsed.data.preferredTime,
-      service_data: {
-        serviceSlug: service.slug,
-        serviceName: service.name,
-        questions: service.questions.map((question) => ({
-          id: question.id,
-          label: question.label,
-          value: parsed.data.serviceData[question.id],
-        })),
-      },
-      selected_addons: selectedAddons,
-      estimated_price: estimatedTotal,
-      status: "Active",
-      next_booking_date: parsed.data.nextBookingDate,
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    throw toSupabaseError(error);
-  }
+      preferredDay,
+      preferredTime: parsed.data.preferredTime,
+      firstBookingDate,
+      addressId: addressId || null,
+    },
+  });
+  const payment = await initializeBookingPayment(
+    createdBooking,
+    parsed.data.paymentType
+  );
 
   revalidatePath("/account");
-  revalidatePath("/account/recurring");
-  revalidatePath("/admin/recurring");
+  revalidatePath("/account/bookings");
+  revalidatePath("/admin/bookings");
 
-  return { id: String(data.id) };
+  return {
+    id: "",
+    bookingReference,
+    authorizationUrl: payment.authorizationUrl,
+  };
 }
 
 export async function signUpCustomer(values: unknown) {
@@ -1393,6 +1527,123 @@ async function saveBookingAddress(
   revalidatePath("/account/addresses");
 }
 
+async function createPendingBookingForPayment({
+  bookingReference,
+  customerName,
+  customerEmail,
+  customerPhone,
+  customerId,
+  serviceId,
+  address,
+  suburb,
+  city,
+  bookingDate,
+  bookingTime,
+  notes,
+  service,
+  serviceData,
+  selectedAddons,
+  estimatedTotal,
+  paymentType,
+  cleanerSelectionType = "auto",
+  preferredCleaner = {
+    preferredCleanerId: "",
+    preferredCleanerName: "",
+  },
+  recurringSetup,
+}: PendingBookingInput) {
+  const { totalAmount } = calculatePaymentAmount(estimatedTotal, paymentType);
+  const { data, error } = await getSupabaseAdmin()
+    .from("bookings")
+    .insert({
+      booking_reference: bookingReference,
+      customer_name: customerName,
+      customer_email: customerEmail,
+      customer_phone: customerPhone,
+      customer_id: customerId,
+      service_id: serviceId,
+      address,
+      suburb,
+      city,
+      booking_date: bookingDate,
+      booking_time: bookingTime,
+      scheduled_start_time: toScheduledTimestamp(bookingDate, bookingTime),
+      scheduled_end_time: toScheduledTimestamp(bookingDate, bookingTime, 3),
+      notes,
+      service_data: {
+        serviceSlug: service.slug,
+        serviceName: service.name,
+        cleanerSelectionType,
+        ...preferredCleaner,
+        ...(recurringSetup ? { recurringSetup } : {}),
+        questions: service.questions.map((question) => ({
+          id: question.id,
+          label: question.label,
+          value: serviceData[question.id],
+        })),
+      },
+      selected_addons: selectedAddons,
+      estimated_price: estimatedTotal,
+      status: "Pending Payment",
+      payment_status: "Pending Payment",
+      payment_type: paymentType,
+      total_amount: totalAmount,
+      amount_paid: 0,
+      balance_due: totalAmount,
+      can_reschedule: true,
+      can_cancel: true,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  const booking = await getBookingById(String(data.id));
+
+  if (!booking) {
+    throw new Error("Booking was created but could not be loaded for payment.");
+  }
+
+  return booking;
+}
+
+async function saveRecurringAddressFromBooking(
+  customerId: string,
+  values: BookingWizardValues
+) {
+  if (values.selectedAddressId) {
+    return values.selectedAddressId;
+  }
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("customer_addresses")
+    .insert({
+      customer_id: customerId,
+      label: values.addressLabel?.trim() || "Recurring plan address",
+      address: values.address,
+      suburb: values.suburb,
+      city: values.city,
+      access_instructions: values.accessInstructions?.trim() || null,
+      gate_code: values.gateCode?.trim() || null,
+      parking_instructions: values.parkingInstructions?.trim() || null,
+      is_default: false,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  if (values.saveAddress) {
+    revalidatePath("/account/addresses");
+  }
+
+  return String(data.id);
+}
+
 async function saveRecurringAddress(
   customerId: string,
   values: RecurringBookingValues
@@ -1447,6 +1698,10 @@ async function saveRecurringAddress(
 
   revalidatePath("/account/addresses");
   return String(data.id);
+}
+
+function getBookingRecurringFrequency(values: BookingWizardValues) {
+  return normalizeRecurringFrequency(values.serviceData.cleaning_frequency);
 }
 
 function toAddressPayload(customerId: string, values: AddressValues) {
