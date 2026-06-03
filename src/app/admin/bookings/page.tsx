@@ -67,7 +67,7 @@ export default async function AdminBookingsPage({
       title="Bookings"
       description="Review service-specific requests and update each booking status."
       actions={
-        <Link href="/book" className={buttonVariants()}>
+        <Link href="/admin/bookings/new" className={buttonVariants()}>
           New booking
         </Link>
       }
@@ -179,13 +179,18 @@ export default async function AdminBookingsPage({
                           {booking.latest_payment?.payment_reference ?? "None"}
                         </TableCell>
                         <TableCell>
-                          {booking.assigned_cleaner ? (
-                            <Link
-                              href={`/admin/cleaners/${booking.assigned_cleaner.id}`}
-                              className="font-medium hover:underline"
-                            >
-                              {booking.assigned_cleaner.full_name}
-                            </Link>
+                          {booking.assigned_cleaners.length ? (
+                            <div className="grid gap-1">
+                              {booking.assigned_cleaners.map((cleaner) => (
+                                <Link
+                                  key={cleaner.id}
+                                  href={`/admin/cleaners/${cleaner.id}`}
+                                  className="font-medium hover:underline"
+                                >
+                                  {cleaner.full_name}
+                                </Link>
+                              ))}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">
                               Not assigned
@@ -373,7 +378,12 @@ function filterBookings(
       !params.paymentStatus ||
       booking.payment_status === params.paymentStatus;
     const matchesCleaner =
-      !params.cleaner || booking.assigned_cleaner_id === params.cleaner;
+      !params.cleaner ||
+      booking.assignments.some(
+        (assignment) =>
+          assignment.cleaner_id === params.cleaner &&
+          assignment.assignment_status !== "Cancelled"
+      );
     const matchesJobStatus =
       !params.jobStatus || booking.job_status === params.jobStatus;
     const matchesQuery =
@@ -386,7 +396,7 @@ function filterBookings(
         booking.service_name,
         booking.suburb,
         booking.city,
-        booking.assigned_cleaner?.full_name ?? "",
+        ...booking.assigned_cleaners.map((cleaner) => cleaner.full_name),
       ]
         .join(" ")
         .toLowerCase()

@@ -16,6 +16,11 @@ export const bookingWizardSchema = z
     serviceData: z.record(z.string(), serviceValueSchema),
     selectedAddons: z.array(z.string()),
     recurringPreferredDays: z.array(recurringDaySchema),
+    numberOfCleaners: z
+      .number()
+      .int("Choose a whole number of cleaners.")
+      .min(1, "Choose at least one cleaner.")
+      .max(5, "Choose no more than five cleaners."),
     cleanerSelectionType: z.enum(cleanerSelectionTypes),
     preferredCleanerId: z.string().optional(),
     preferredCleanerName: z.string().optional(),
@@ -81,6 +86,7 @@ export const defaultBookingWizardValues: BookingWizardValues = {
   serviceData: {},
   selectedAddons: [],
   recurringPreferredDays: ["Monday"],
+  numberOfCleaners: 1,
   cleanerSelectionType: "auto",
   preferredCleanerId: "",
   preferredCleanerName: "",

@@ -30,7 +30,12 @@ import {
 } from "@/lib/auth";
 import type { ServiceConfig, ServiceQuestion } from "@/config/services";
 import { bookingWizardSchema, type BookingWizardValues } from "@/lib/booking-schema";
-import { generateInvoiceForBooking, sendInvoiceAndLog, updateInvoiceStatus } from "@/lib/invoices";
+import {
+  generateInvoiceForBooking,
+  generateMonthlyInvoiceForCustomer,
+  sendInvoiceAndLog,
+  updateInvoiceStatus,
+} from "@/lib/invoices";
 import { calculatePaymentAmount } from "@/lib/paystack";
 import { initializeBookingPayment } from "@/lib/payments";
 import {
@@ -115,6 +120,7 @@ type PendingBookingInput = {
   pricingBreakdown: PricingBreakdown;
   paymentType: PaymentType;
   cleanerSelectionType?: "auto" | "preferred";
+  numberOfCleaners?: number;
   preferredCleaner?: {
     preferredCleanerId: string;
     preferredCleanerName: string;
@@ -158,8 +164,12 @@ export async function createBooking(values: BookingWizardValues) {
     parsed.data.paymentType
   );
   const cleanerSelectionType = parsed.data.cleanerSelectionType ?? "auto";
+  const customerCanChooseCleaners = canCustomerChooseCleaners(service.name);
+  const numberOfCleaners = customerCanChooseCleaners
+    ? clampCleanerCount(parsed.data.numberOfCleaners)
+    : 1;
   const preferredCleaner =
-    cleanerSelectionType === "preferred"
+    customerCanChooseCleaners && cleanerSelectionType === "preferred"
       ? {
           preferredCleanerId: parsed.data.preferredCleanerId?.trim() ?? "",
           preferredCleanerName: parsed.data.preferredCleanerName?.trim() ?? "",
@@ -206,7 +216,8 @@ export async function createBooking(values: BookingWizardValues) {
       estimatedTotal,
       pricingBreakdown,
       paymentType: parsed.data.paymentType,
-      cleanerSelectionType,
+      cleanerSelectionType: customerCanChooseCleaners ? cleanerSelectionType : "auto",
+      numberOfCleaners,
       preferredCleaner,
       recurringSetup: {
         frequency: recurringFrequency,
@@ -268,7 +279,8 @@ export async function createBooking(values: BookingWizardValues) {
       serviceSlug: service.slug,
       serviceName: service.name,
       pricingBreakdown,
-      cleanerSelectionType,
+      cleanerSelectionType: customerCanChooseCleaners ? cleanerSelectionType : "auto",
+      numberOfCleaners,
       ...preferredCleaner,
       questions: service.questions.map((question) => ({
         id: question.id,
@@ -278,6 +290,7 @@ export async function createBooking(values: BookingWizardValues) {
     },
     selected_addons: selectedAddons,
     estimated_price: estimatedTotal,
+    number_of_cleaners: numberOfCleaners,
     status: "Pending Payment",
     payment_status: "Pending Payment",
     payment_type: parsed.data.paymentType,
@@ -823,8 +836,99 @@ export async function updateBookingStatus(formData: FormData) {
 
   if (status === "Completed") {
     await sendCompletedBookingAutomations(bookingId);
-    await ensureEarningsForCompletedBooking(bookingId);
+    await ensureEarningsForBooking(bookingId);
   }
+}
+
+export async function createAdminDraftBooking(formData: FormData) {
+  await requireAdmin("/admin/bookings/new");
+  const customerId = getRequiredString(formData, "customer_id");
+  const serviceSlug = getRequiredString(formData, "service_slug");
+  const bookingDate = getRequiredString(formData, "booking_date");
+  const bookingTime = getRequiredString(formData, "booking_time");
+  const address = getRequiredString(formData, "address");
+  const suburb = getRequiredString(formData, "suburb");
+  const city = getRequiredString(formData, "city");
+  const status = getRequiredString(formData, "status") as BookingStatus;
+
+  if (status !== "Draft" && status !== "Pending Invoice") {
+    throw new Error("Admin-created bookings must start as Draft or Pending Invoice.");
+  }
+
+  const [service, customerResult] = await Promise.all([
+    getServiceConfigBySlug(serviceSlug, { includeInactive: true }),
+    getSupabaseAdmin()
+      .from("customers")
+      .select("id, full_name, email, phone")
+      .eq("id", customerId)
+      .single(),
+  ]);
+
+  if (!service) {
+    throw new Error("Selected service is no longer available.");
+  }
+
+  if (customerResult.error) {
+    throw toSupabaseError(customerResult.error);
+  }
+
+  const serviceData = buildAdminBookingServiceData(service, formData);
+  const estimatedTotal =
+    getNumber(formData, "total_amount") ||
+    calculateEstimatedTotal(service, [], serviceData);
+  const pricingBreakdown = calculateBookingPricing(service, [], serviceData);
+  const bookingReference = createBookingReference();
+  const { data, error } = await getSupabaseAdmin()
+    .from("bookings")
+    .insert({
+      booking_reference: bookingReference,
+      customer_name: String(customerResult.data.full_name ?? ""),
+      customer_email: String(customerResult.data.email ?? ""),
+      customer_phone: String(customerResult.data.phone ?? ""),
+      customer_id: customerId,
+      service_id: service.id,
+      address,
+      suburb,
+      city,
+      booking_date: bookingDate,
+      booking_time: bookingTime,
+      scheduled_start_time: toScheduledTimestamp(bookingDate, bookingTime),
+      scheduled_end_time: toScheduledTimestamp(bookingDate, bookingTime, 3),
+      notes: getOptionalString(formData, "notes"),
+      service_data: {
+        serviceSlug: service.slug,
+        serviceName: service.name,
+        pricingBreakdown,
+        cleanerSelectionType: "auto",
+        numberOfCleaners: clampCleanerCount(getNumber(formData, "number_of_cleaners") || 1),
+        questions: service.questions.map((question) => ({
+          id: question.id,
+          label: question.label,
+          value: serviceData[question.id] ?? "",
+        })),
+      },
+      selected_addons: [],
+      estimated_price: estimatedTotal,
+      number_of_cleaners: clampCleanerCount(getNumber(formData, "number_of_cleaners") || 1),
+      status,
+      payment_status: "Pending Payment",
+      payment_type: null,
+      total_amount: estimatedTotal,
+      amount_paid: 0,
+      balance_due: estimatedTotal,
+      admin_created: true,
+      can_reschedule: false,
+      can_cancel: false,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  revalidatePath("/admin/bookings");
+  redirect(`/admin/bookings/${String(data.id)}`);
 }
 
 export async function createCleaner(values: CleanerFormValues) {
@@ -988,7 +1092,7 @@ export async function updateBookingJobStatus(formData: FormData) {
 
   if (jobStatus === "Completed") {
     await sendCompletedBookingAutomations(bookingId);
-    await ensureEarningsForCompletedBooking(bookingId);
+    await ensureEarningsForBooking(bookingId);
   }
 }
 
@@ -1074,6 +1178,28 @@ export async function generateInvoiceForBookingAction(formData: FormData) {
   revalidatePath(`/admin/bookings/${bookingId}`);
 }
 
+export async function generateMonthlyInvoiceAction(formData: FormData) {
+  await requireAdmin("/admin/invoices");
+  const customerId = getRequiredString(formData, "customer_id");
+  const month = getRequiredString(formData, "month");
+  const dueDate = getRequiredString(formData, "due_date");
+  const send = formData.get("send_invoice") === "on";
+
+  const invoice = await generateMonthlyInvoiceForCustomer({
+    customerId,
+    month,
+    dueDate,
+    send,
+  });
+
+  if (!invoice) {
+    throw new Error("No unpaid bookings were found for this customer and month.");
+  }
+
+  revalidatePath("/admin/invoices");
+  redirect(`/admin/invoices/${invoice.id}`);
+}
+
 export async function sendInvoiceAction(formData: FormData) {
   await requireAdmin("/admin/invoices");
   const invoiceId = getRequiredString(formData, "invoice_id");
@@ -1104,13 +1230,21 @@ export async function assignCleanerToBooking(formData: FormData) {
   await requireAdmin("/admin/bookings");
   const bookingId = getRequiredString(formData, "booking_id");
   const cleanerId = getRequiredString(formData, "cleaner_id");
-  const currentCleanerId = getOptionalString(formData, "current_cleaner_id");
   const manualOverride = formData.get("manual_override") === "on";
-  const assignmentStatus = currentCleanerId ? "Reassigned" : "Assigned";
+  const isTeamLeader = formData.get("is_team_leader") === "on";
   const booking = await getBookingById(bookingId);
 
   if (!booking) {
     throw new Error("Booking could not be found.");
+  }
+  const alreadyAssigned = booking.assignments.some(
+    (assignment) =>
+      assignment.cleaner_id === cleanerId &&
+      assignment.assignment_status !== "Cancelled"
+  );
+
+  if (alreadyAssigned) {
+    throw new Error("This cleaner is already assigned to the booking.");
   }
 
   const conflicts = await getScheduleConflicts(booking, cleanerId);
@@ -1130,7 +1264,7 @@ export async function assignCleanerToBooking(formData: FormData) {
   const { error: bookingError } = await getSupabaseAdmin()
     .from("bookings")
     .update({
-      assigned_cleaner_id: cleanerId,
+      assigned_cleaner_id: booking.assigned_cleaner_id ?? cleanerId,
       job_status: "Assigned",
     })
     .eq("id", bookingId);
@@ -1144,7 +1278,8 @@ export async function assignCleanerToBooking(formData: FormData) {
     .insert({
       booking_id: bookingId,
       cleaner_id: cleanerId,
-      assignment_status: assignmentStatus,
+      assignment_status: booking.assignments.length ? "Reassigned" : "Assigned",
+      is_team_leader: isTeamLeader,
     });
 
   if (assignmentError) {
@@ -1155,6 +1290,7 @@ export async function assignCleanerToBooking(formData: FormData) {
   revalidatePath(`/admin/bookings/${bookingId}`);
   revalidatePath("/admin/schedule");
   revalidatePath("/cleaner/jobs");
+  await ensureEarningsForBooking(bookingId);
 
   await Promise.all([
     conflicts.cleaner.user_id
@@ -1180,12 +1316,23 @@ export async function removeCleanerAssignment(formData: FormData) {
   await requireAdmin("/admin/bookings");
   const bookingId = getRequiredString(formData, "booking_id");
   const currentCleanerId = getRequiredString(formData, "current_cleaner_id");
+  const booking = await getBookingById(bookingId);
+
+  if (!booking) {
+    throw new Error("Booking could not be found.");
+  }
+
+  const remainingAssignments = booking.assignments.filter(
+    (assignment) =>
+      assignment.cleaner_id !== currentCleanerId &&
+      assignment.assignment_status !== "Cancelled"
+  );
 
   const { error: bookingError } = await getSupabaseAdmin()
     .from("bookings")
     .update({
-      assigned_cleaner_id: null,
-      job_status: "Not Assigned",
+      assigned_cleaner_id: remainingAssignments[0]?.cleaner_id ?? null,
+      job_status: remainingAssignments.length ? "Assigned" : "Not Assigned",
     })
     .eq("id", bookingId);
 
@@ -1207,6 +1354,7 @@ export async function removeCleanerAssignment(formData: FormData) {
 
   revalidatePath("/admin/bookings");
   revalidatePath(`/admin/bookings/${bookingId}`);
+  revalidatePath("/cleaner/jobs");
 }
 
 export async function updateCleanerJobWorkflow(formData: FormData) {
@@ -1232,14 +1380,19 @@ export async function updateCleanerJobWorkflow(formData: FormData) {
   }
 
   if (jobStatus === "Declined") {
-    update.assigned_cleaner_id = null;
+    const remainingAssignments = booking.assignments.filter(
+      (assignment) =>
+        assignment.cleaner_id !== cleaner.id &&
+        assignment.assignment_status !== "Cancelled"
+    );
+    update.assigned_cleaner_id = remainingAssignments[0]?.cleaner_id ?? null;
+    update.job_status = remainingAssignments.length ? "Assigned" : "Not Assigned";
   }
 
   const { error } = await getSupabaseAdmin()
     .from("bookings")
     .update(update)
-    .eq("id", bookingId)
-    .eq("assigned_cleaner_id", cleaner.id);
+    .eq("id", bookingId);
 
   if (error) {
     throw toSupabaseError(error);
@@ -1255,7 +1408,7 @@ export async function updateCleanerJobWorkflow(formData: FormData) {
 
   if (jobStatus === "Completed") {
     await sendCompletedBookingAutomations(bookingId);
-    await ensureEarningsForCompletedBooking(bookingId);
+    await ensureEarningsForBooking(bookingId);
   }
 
   if (booking.customer_id) {
@@ -1848,6 +2001,7 @@ async function createPendingBookingForPayment({
   pricingBreakdown,
   paymentType,
   cleanerSelectionType = "auto",
+  numberOfCleaners = 1,
   preferredCleaner = {
     preferredCleanerId: "",
     preferredCleanerName: "",
@@ -1877,6 +2031,7 @@ async function createPendingBookingForPayment({
         serviceName: service.name,
         pricingBreakdown,
         cleanerSelectionType,
+        numberOfCleaners,
         ...preferredCleaner,
         ...(recurringSetup ? { recurringSetup } : {}),
         questions: service.questions.map((question) => ({
@@ -1887,6 +2042,7 @@ async function createPendingBookingForPayment({
       },
       selected_addons: selectedAddons,
       estimated_price: estimatedTotal,
+      number_of_cleaners: numberOfCleaners,
       status: "Pending Payment",
       payment_status: "Pending Payment",
       payment_type: paymentType,
@@ -2087,6 +2243,20 @@ function validateServiceQuestion(
   }
 }
 
+function buildAdminBookingServiceData(service: ServiceConfig, formData: FormData) {
+  return service.questions.reduce<Record<string, string | number>>((data, question) => {
+    const value = formData.get(`service_data_${question.id}`);
+
+    if (typeof value !== "string" || !value.trim()) {
+      data[question.id] = question.type === "number" ? 0 : "";
+      return data;
+    }
+
+    data[question.id] = question.type === "number" ? Number(value) : value.trim();
+    return data;
+  }, {});
+}
+
 function getNumber(formData: FormData, key: string) {
   const value = Number(formData.get(key) ?? 0);
 
@@ -2203,24 +2373,40 @@ function toScheduledTimestamp(date: string, time: string, addHours = 0) {
   return scheduled.toISOString();
 }
 
-async function ensureEarningsForCompletedBooking(bookingId: string) {
+async function ensureEarningsForBooking(bookingId: string) {
   const booking = await getBookingById(bookingId);
 
-  if (!booking?.assigned_cleaner_id) {
+  if (!booking?.assignments.length) {
     return;
   }
 
-  const cleaner = booking.assigned_cleaner;
+  const activeAssignments = booking.assignments.filter(
+    (assignment) => assignment.assignment_status !== "Cancelled" && assignment.cleaner
+  );
 
-  if (!cleaner) {
+  if (!activeAssignments.length) {
     return;
   }
 
-  const earning = calculateCleanerEarningForBooking(booking, cleaner);
+  const sharedEarning = shouldUseSharedCleanerEarning(booking.service_name)
+    ? calculateCleanerEarningForBooking(
+        booking,
+        activeAssignments[0].cleaner as Cleaner,
+        activeAssignments[0].is_team_leader
+      )
+    : null;
 
-  const { error: earningError } = await saveCleanerEarningForBooking(
-    {
-      cleaner_id: booking.assigned_cleaner_id,
+  for (const assignment of activeAssignments) {
+    const cleaner = assignment.cleaner as Cleaner;
+    const earning =
+      sharedEarning ??
+      calculateCleanerEarningForBooking(
+        booking,
+        cleaner,
+        assignment.is_team_leader
+      );
+    const earningPayload = {
+      cleaner_id: cleaner.id,
       booking_id: booking.id,
       gross_amount: earning.bookingAmount,
       platform_fee: earning.serviceFee,
@@ -2233,51 +2419,52 @@ async function ensureEarningsForCompletedBooking(bookingId: string) {
       calculation_details: earning.calculationDetails,
       net_amount: earning.finalPayout,
       status: "Pending",
-    },
-    booking.id,
-    booking.assigned_cleaner_id
-  );
+    };
 
-  if (earningError) {
-    throw toSupabaseError(earningError);
-  }
+    const { error: earningError } = await saveCleanerEarningForBooking(
+      earningPayload,
+      booking.id,
+      cleaner.id
+    );
 
-  const { error: payrollError } = await savePayrollRecordForBooking(
-    {
-      cleaner_id: booking.assigned_cleaner_id,
-      booking_id: booking.id,
-      amount: earning.finalPayout,
-      bonus: 0,
-      deduction: 0,
-      status: "Pending",
-    },
-    booking.id,
-    booking.assigned_cleaner_id
-  );
+    if (earningError) {
+      throw toSupabaseError(earningError);
+    }
 
-  if (payrollError) {
-    throw toSupabaseError(payrollError);
+    const { error: payrollError } = await savePayrollRecordForBooking(
+      {
+        cleaner_id: cleaner.id,
+        booking_id: booking.id,
+        amount: earning.finalPayout,
+        bonus: 0,
+        deduction: 0,
+        status: "Pending",
+      },
+      booking.id,
+      cleaner.id
+    );
+
+    if (payrollError) {
+      throw toSupabaseError(payrollError);
+    }
   }
 }
 
 function calculateCleanerEarningForBooking(
   booking: BookingWithService,
-  cleaner: Cleaner
+  cleaner: Cleaner,
+  isTeamLeader = false
 ) {
   const bookingAmount = roundMoney(booking.total_amount || booking.estimated_price);
   const serviceFee = roundMoney(
     booking.service_data.pricingBreakdown?.serviceFee ?? 0
   );
   const netBookingValue = roundMoney(Math.max(bookingAmount - serviceFee, 0));
-  const cleanerRole = cleaner?.role === "Team Leader" ? "Team Leader" : "Cleaner";
+  const cleanerRole =
+    isTeamLeader || cleaner?.role === "Team Leader" ? "Team Leader" : "Cleaner";
   const tenureMonths = getCleanerTenureMonths(cleaner?.started_at ?? cleaner?.created_at);
-  const fixedRateServices = new Set([
-    "Deep Cleaning",
-    "Moving Cleaning",
-    "Carpet Cleaning",
-  ]);
 
-  if (fixedRateServices.has(booking.service_name)) {
+  if (usesFixedTeamRate(booking.service_name)) {
     const finalPayout = cleanerRole === "Team Leader" ? 270 : 250;
 
     return {
@@ -2315,6 +2502,26 @@ function calculateCleanerEarningForBooking(
       maximumPayout: 300,
     },
   };
+}
+
+function shouldUseSharedCleanerEarning(serviceName: string) {
+  return serviceName === "Regular Cleaning" || serviceName === "Airbnb Cleaning";
+}
+
+function usesFixedTeamRate(serviceName: string) {
+  return serviceName === "Deep Cleaning" || serviceName === "Moving Cleaning";
+}
+
+function canCustomerChooseCleaners(serviceName: string) {
+  return !usesFixedTeamRate(serviceName);
+}
+
+function clampCleanerCount(value: number) {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  return Math.min(Math.max(Math.round(value), 1), 5);
 }
 
 function getCleanerTenureMonths(startedAt: string | null | undefined) {

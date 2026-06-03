@@ -81,8 +81,12 @@ export async function getV15SchemaStatus(): Promise<PaymentSchemaStatus> {
       supabase
         .from("invoices")
         .select(
-          "id, booking_id, customer_id, invoice_number, invoice_status, subtotal, total, amount_paid, balance_due, issued_at, paid_at, created_at"
+          "id, booking_id, customer_id, invoice_number, invoice_status, subtotal, total, amount_paid, balance_due, due_date, payment_link, issued_at, paid_at, created_at"
         )
+        .limit(1),
+      supabase
+        .from("invoice_line_items")
+        .select("id, invoice_id, booking_id, description, service_type, booking_date, amount, created_at")
         .limit(1),
     ]);
 

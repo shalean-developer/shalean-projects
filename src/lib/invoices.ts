@@ -79,6 +79,114 @@ export async function generateInvoiceForBooking(
   return invoice;
 }
 
+export async function generateMonthlyInvoiceForCustomer({
+  customerId,
+  month,
+  dueDate,
+  send = false,
+}: {
+  customerId: string;
+  month: string;
+  dueDate: string;
+  send?: boolean;
+}) {
+  const monthStart = `${month}-01`;
+  const monthEnd = getNextMonthStart(monthStart);
+  const { data: bookings, error } = await getSupabaseAdmin()
+    .from("bookings")
+    .select("id, booking_reference, service_id, customer_id, customer_name, customer_email, customer_phone, booking_date, booking_time, service_data, selected_addons, estimated_price, total_amount, amount_paid, balance_due, status")
+    .eq("customer_id", customerId)
+    .gte("booking_date", monthStart)
+    .lt("booking_date", monthEnd)
+    .gt("balance_due", 0)
+    .in("status", ["Pending Invoice", "Invoiced", "Completed", "Confirmed"]);
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  if (!bookings?.length) {
+    return null;
+  }
+
+  const subtotal = bookings.reduce(
+    (sum, booking) => sum + Number(booking.total_amount ?? booking.estimated_price ?? 0),
+    0
+  );
+  const amountPaid = bookings.reduce(
+    (sum, booking) => sum + Number(booking.amount_paid ?? 0),
+    0
+  );
+  const balanceDue = bookings.reduce(
+    (sum, booking) => sum + Number(booking.balance_due ?? 0),
+    0
+  );
+  const invoiceNumber = await createInvoiceNumber();
+  const { data: invoiceData, error: invoiceError } = await getSupabaseAdmin()
+    .from("invoices")
+    .insert({
+      booking_id: null,
+      customer_id: customerId,
+      invoice_number: invoiceNumber,
+      invoice_status: "Draft",
+      subtotal,
+      total: subtotal,
+      amount_paid: amountPaid,
+      balance_due: balanceDue,
+      due_date: dueDate,
+      payment_link: `${getSiteUrl()}/account/invoices`,
+    })
+    .select("id")
+    .single();
+
+  if (invoiceError) {
+    throw toSupabaseError(invoiceError);
+  }
+
+  const invoiceId = String(invoiceData.id);
+  const lineItems = bookings.map((booking) => ({
+    invoice_id: invoiceId,
+    booking_id: String(booking.id),
+    description: String(booking.booking_reference ?? ""),
+    service_type: getServiceName(booking.service_data),
+    booking_date: String(booking.booking_date ?? monthStart),
+    amount: Number(booking.balance_due ?? booking.total_amount ?? booking.estimated_price ?? 0),
+  }));
+  const { error: lineError } = await getSupabaseAdmin()
+    .from("invoice_line_items")
+    .insert(lineItems);
+
+  if (lineError) {
+    throw toSupabaseError(lineError);
+  }
+
+  const { error: bookingError } = await getSupabaseAdmin()
+    .from("bookings")
+    .update({ status: "Invoiced" })
+    .in("id", bookings.map((booking) => String(booking.id)));
+
+  if (bookingError) {
+    throw toSupabaseError(bookingError);
+  }
+
+  const paymentLink = `${getSiteUrl()}/account/invoices/${invoiceId}`;
+  await getSupabaseAdmin()
+    .from("invoices")
+    .update({ payment_link: paymentLink })
+    .eq("id", invoiceId);
+
+  const invoice = await getInvoiceById(invoiceId);
+
+  if (invoice && send) {
+    await sendInvoiceAndLog(invoice);
+  }
+
+  revalidatePath("/admin/invoices");
+  revalidatePath("/admin/bookings");
+  revalidatePath("/account/invoices");
+  return invoice;
+}
+
 export async function sendInvoiceAndLog(invoice: Invoice) {
   const result = await sendInvoiceEmail(invoice);
   const now = new Date().toISOString();
@@ -136,7 +244,14 @@ export async function updateInvoiceStatus(
     throw toSupabaseError(error);
   }
 
-  revalidateInvoicePaths(invoiceId, String(data.booking_id));
+  revalidateInvoicePaths(
+    invoiceId,
+    typeof data.booking_id === "string" ? data.booking_id : null
+  );
+
+  if (invoiceStatus === "Paid") {
+    await markInvoiceBookingsPaid(invoiceId);
+  }
 }
 
 async function getInvoiceByBookingId(bookingId: string): Promise<Invoice | null> {
@@ -187,11 +302,64 @@ function inferInvoiceStatus(
   return existingStatus ?? "Draft";
 }
 
-function revalidateInvoicePaths(invoiceId: string, bookingId: string) {
+function revalidateInvoicePaths(invoiceId: string, bookingId: string | null) {
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/invoices/${invoiceId}`);
   revalidatePath("/account/invoices");
   revalidatePath(`/account/invoices/${invoiceId}`);
   revalidatePath("/admin/automation");
-  revalidatePath(`/admin/bookings/${bookingId}`);
+  if (bookingId) {
+    revalidatePath(`/admin/bookings/${bookingId}`);
+  }
+}
+
+async function markInvoiceBookingsPaid(invoiceId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("invoice_line_items")
+    .select("booking_id")
+    .eq("invoice_id", invoiceId);
+
+  if (error || !data?.length) {
+    if (error) {
+      throw toSupabaseError(error);
+    }
+
+    return;
+  }
+
+  const bookingIds = data.map((item) => String(item.booking_id));
+  const { error: bookingError } = await getSupabaseAdmin()
+    .from("bookings")
+    .update({
+      status: "Paid",
+      payment_status: "Paid",
+      balance_due: 0,
+      confirmed_at: new Date().toISOString(),
+    })
+    .in("id", bookingIds);
+
+  if (bookingError) {
+    throw toSupabaseError(bookingError);
+  }
+}
+
+function getNextMonthStart(monthStart: string) {
+  const date = new Date(`${monthStart}T00:00:00`);
+  date.setMonth(date.getMonth() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function getServiceName(value: unknown) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return String((value as { serviceName?: unknown }).serviceName ?? "Cleaning service");
+  }
+
+  return "Cleaning service";
+}
+
+function getSiteUrl() {
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+    "http://localhost:3000"
+  );
 }

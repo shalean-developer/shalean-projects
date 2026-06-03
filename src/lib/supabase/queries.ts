@@ -9,6 +9,7 @@ import type {
 } from "@/config/services";
 import type {
   BookingAddonData,
+  BookingAssignment,
   BookingRequest,
   BookingServiceData,
   BookingStatus,
@@ -51,13 +52,13 @@ import type {
 } from "@/lib/types";
 
 const bookingSelect =
-  "id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)";
+  "id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, number_of_cleaners, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at), booking_assignments(id, booking_id, cleaner_id, assignment_status, is_team_leader, assigned_at, created_at, cleaners(id, user_id, full_name, email, phone, role, started_at, profile_photo, bio, specialties, rating, completed_jobs, active, created_at)), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)";
 
 const recurringBookingSelect =
   "id, customer_id, service_id, address_id, frequency, preferred_day, preferred_time, service_data, selected_addons, estimated_price, status, next_booking_date, created_at, services(name), customer_addresses(id, customer_id, label, address, suburb, city, access_instructions, gate_code, parking_instructions, is_default, created_at), customers(id, user_id, full_name, email, phone, created_at)";
 
 const invoiceSelect =
-  `id, booking_id, customer_id, invoice_number, invoice_status, subtotal, total, amount_paid, balance_due, issued_at, paid_at, created_at, bookings(${bookingSelect}), customers(id, user_id, full_name, email, phone, created_at)`;
+  `id, booking_id, customer_id, invoice_number, invoice_status, subtotal, total, amount_paid, balance_due, due_date, payment_link, issued_at, paid_at, created_at, invoice_line_items(id, invoice_id, booking_id, description, service_type, booking_date, amount, created_at, bookings(${bookingSelect})), bookings(${bookingSelect}), customers(id, user_id, full_name, email, phone, created_at)`;
 
 const reviewSelect =
   `id, booking_id, customer_id, rating, review_text, public, created_at, bookings(${bookingSelect}), customers(id, user_id, full_name, email, phone, created_at)`;
@@ -209,17 +210,27 @@ export async function getBookingsByCleanerId(
   cleanerId: string
 ): Promise<BookingWithService[]> {
   const { data, error } = await getSupabaseAdmin()
-    .from("bookings")
-    .select(bookingSelect)
-    .eq("assigned_cleaner_id", cleanerId)
-    .order("booking_date", { ascending: true })
-    .order("booking_time", { ascending: true });
+    .from("booking_assignments")
+    .select(`id, bookings(${bookingSelect})`)
+    .eq("cleaner_id", cleanerId)
+    .neq("assignment_status", "Cancelled");
 
   if (error) {
     throw toSupabaseError(error);
   }
 
-  return (data ?? []).map(mapBookingWithService);
+  return (data ?? [])
+    .map((assignment) => {
+      const booking = Array.isArray(assignment.bookings)
+        ? assignment.bookings[0]
+        : assignment.bookings;
+      return booking ? mapBookingWithService(booking) : null;
+    })
+    .filter((booking): booking is BookingWithService => Boolean(booking))
+    .sort((a, b) => {
+      const dateCompare = a.booking_date.localeCompare(b.booking_date);
+      return dateCompare || a.booking_time.localeCompare(b.booking_time);
+    });
 }
 
 export async function getCleanerBookingById(
@@ -227,17 +238,19 @@ export async function getCleanerBookingById(
   bookingId: string
 ): Promise<BookingWithService | null> {
   const { data, error } = await getSupabaseAdmin()
-    .from("bookings")
-    .select(bookingSelect)
-    .eq("id", bookingId)
-    .eq("assigned_cleaner_id", cleanerId)
+    .from("booking_assignments")
+    .select(`id, bookings(${bookingSelect})`)
+    .eq("booking_id", bookingId)
+    .eq("cleaner_id", cleanerId)
+    .neq("assignment_status", "Cancelled")
     .maybeSingle();
 
   if (error) {
     throw toSupabaseError(error);
   }
 
-  return data ? mapBookingWithService(data) : null;
+  const booking = Array.isArray(data?.bookings) ? data?.bookings[0] : data?.bookings;
+  return booking ? mapBookingWithService(booking) : null;
 }
 
 export async function getBookingById(
@@ -744,14 +757,10 @@ export async function getScheduleConflicts(
       .eq("available_date", booking.booking_date)
       .eq("is_available", true),
     getSupabaseAdmin()
-      .from("bookings")
-      .select(bookingSelect)
-      .eq("assigned_cleaner_id", cleanerId)
-      .neq("id", booking.id)
-      .not("scheduled_start_time", "is", null)
-      .not("scheduled_end_time", "is", null)
-      .lt("scheduled_start_time", bookingEndTime)
-      .gt("scheduled_end_time", bookingStartTime),
+      .from("booking_assignments")
+      .select(`id, bookings(${bookingSelect})`)
+      .eq("cleaner_id", cleanerId)
+      .neq("assignment_status", "Cancelled"),
   ]);
 
   if (availabilityResult.error) {
@@ -770,7 +779,24 @@ export async function getScheduleConflicts(
         slot.start_time.slice(0, 5) <= bookingStartLocalTime &&
         slot.end_time.slice(0, 5) >= bookingEndLocalTime
     );
-  const overlappingBookings = (overlapResult.data ?? []).map(mapBookingWithService);
+  const overlappingBookings = (overlapResult.data ?? [])
+    .map((assignment) => {
+      const relatedBooking = Array.isArray(assignment.bookings)
+        ? assignment.bookings[0]
+        : assignment.bookings;
+      return relatedBooking ? mapBookingWithService(relatedBooking) : null;
+    })
+    .filter((item): item is BookingWithService => Boolean(item))
+    .filter((item) => {
+      if (item.id === booking.id || !item.scheduled_start_time || !item.scheduled_end_time) {
+        return false;
+      }
+
+      return (
+        item.scheduled_start_time < bookingEndTime &&
+        item.scheduled_end_time > bookingStartTime
+      );
+    });
 
   return {
     cleaner,
@@ -975,6 +1001,7 @@ function mapBookingWithService(
   booking: Record<string, unknown> & {
     services?: { name?: string } | { name?: string }[] | null;
     assigned_cleaner?: Record<string, unknown> | Record<string, unknown>[] | null;
+    booking_assignments?: Record<string, unknown>[] | Record<string, unknown> | null;
     payments?: Record<string, unknown>[] | Record<string, unknown> | null;
   }
 ): BookingWithService {
@@ -987,6 +1014,13 @@ function mapBookingWithService(
     const payments = normalisePayments(booking.payments);
     const latestPayment = payments[0] ?? null;
     const estimatedPrice = Number(booking.estimated_price ?? 0);
+    const assignments = normaliseBookingAssignments(booking.booking_assignments);
+    const activeAssignments = assignments.filter(
+      (assignment) => assignment.assignment_status !== "Cancelled"
+    );
+    const assignedCleaners = activeAssignments
+      .map((assignment) => assignment.cleaner)
+      .filter((cleaner): cleaner is Cleaner => Boolean(cleaner));
 
     return {
       ...booking,
@@ -1028,6 +1062,7 @@ function mapBookingWithService(
           ? booking.payment_type
           : latestPayment?.payment_type ?? null,
       total_amount: Number(booking.total_amount ?? estimatedPrice),
+      number_of_cleaners: Number(booking.number_of_cleaners ?? 1),
       amount_paid: Number(booking.amount_paid ?? 0),
       balance_due: Number(booking.balance_due ?? booking.total_amount ?? estimatedPrice),
       confirmed_at:
@@ -1039,7 +1074,12 @@ function mapBookingWithService(
           ? booking.assigned_cleaner_id
           : null,
       job_status: normaliseJobStatus(booking.job_status),
-      assigned_cleaner: assignedCleaner ? mapCleaner(assignedCleaner) : null,
+      assigned_cleaner:
+        assignedCleaner
+          ? mapCleaner(assignedCleaner)
+          : assignedCleaners[0] ?? null,
+      assignments,
+      assigned_cleaners: assignedCleaners,
       can_reschedule:
         typeof booking.can_reschedule === "boolean"
           ? booking.can_reschedule
@@ -1220,6 +1260,7 @@ function mapInvoice(
   invoice: Record<string, unknown> & {
     bookings?: Record<string, unknown> | Record<string, unknown>[] | null;
     customers?: Record<string, unknown> | Record<string, unknown>[] | null;
+    invoice_line_items?: Record<string, unknown>[] | Record<string, unknown> | null;
   }
 ): Invoice {
   const booking = Array.isArray(invoice.bookings)
@@ -1228,10 +1269,11 @@ function mapInvoice(
   const customer = Array.isArray(invoice.customers)
     ? invoice.customers[0]
     : invoice.customers;
+  const lineItems = normaliseInvoiceLineItems(invoice.invoice_line_items);
 
   return {
     id: String(invoice.id ?? ""),
-    booking_id: String(invoice.booking_id ?? ""),
+    booking_id: typeof invoice.booking_id === "string" ? invoice.booking_id : null,
     customer_id: typeof invoice.customer_id === "string" ? invoice.customer_id : null,
     invoice_number: String(invoice.invoice_number ?? ""),
     invoice_status: normaliseInvoiceStatus(invoice.invoice_status),
@@ -1239,11 +1281,46 @@ function mapInvoice(
     total: Number(invoice.total ?? 0),
     amount_paid: Number(invoice.amount_paid ?? 0),
     balance_due: Number(invoice.balance_due ?? 0),
+    due_date: typeof invoice.due_date === "string" ? invoice.due_date : null,
+    payment_link: typeof invoice.payment_link === "string" ? invoice.payment_link : null,
     issued_at: typeof invoice.issued_at === "string" ? invoice.issued_at : null,
     paid_at: typeof invoice.paid_at === "string" ? invoice.paid_at : null,
     created_at: String(invoice.created_at ?? ""),
+    line_items: lineItems,
     booking: booking ? mapBookingWithService(booking) : null,
     customer: customer ? mapCustomer(customer) : null,
+  };
+}
+
+function normaliseInvoiceLineItems(value: unknown) {
+  const lineItems = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? [value]
+      : [];
+
+  return lineItems.map(mapInvoiceLineItem).sort((a, b) => {
+    return a.booking_date.localeCompare(b.booking_date);
+  });
+}
+
+function mapInvoiceLineItem(
+  item: Record<string, unknown> & {
+    bookings?: Record<string, unknown> | Record<string, unknown>[] | null;
+  }
+) {
+  const booking = Array.isArray(item.bookings) ? item.bookings[0] : item.bookings;
+
+  return {
+    id: String(item.id ?? ""),
+    invoice_id: String(item.invoice_id ?? ""),
+    booking_id: String(item.booking_id ?? ""),
+    description: String(item.description ?? ""),
+    service_type: String(item.service_type ?? ""),
+    booking_date: String(item.booking_date ?? ""),
+    amount: Number(item.amount ?? 0),
+    created_at: String(item.created_at ?? ""),
+    booking: booking ? mapBookingWithService(booking) : null,
   };
 }
 
@@ -1392,6 +1469,47 @@ function mapCleanerAvailability(
   };
 }
 
+function normaliseBookingAssignments(value: unknown): BookingAssignment[] {
+  const assignments = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? [value]
+      : [];
+
+  return assignments.map(mapBookingAssignment).sort((a, b) => {
+    if (a.assignment_status === "Cancelled" && b.assignment_status !== "Cancelled") {
+      return 1;
+    }
+
+    if (a.assignment_status !== "Cancelled" && b.assignment_status === "Cancelled") {
+      return -1;
+    }
+
+    return new Date(a.assigned_at).getTime() - new Date(b.assigned_at).getTime();
+  });
+}
+
+function mapBookingAssignment(
+  assignment: Record<string, unknown> & {
+    cleaners?: Record<string, unknown> | Record<string, unknown>[] | null;
+  }
+): BookingAssignment {
+  const cleaner = Array.isArray(assignment.cleaners)
+    ? assignment.cleaners[0]
+    : assignment.cleaners;
+
+  return {
+    id: String(assignment.id ?? ""),
+    booking_id: String(assignment.booking_id ?? ""),
+    cleaner_id: String(assignment.cleaner_id ?? ""),
+    assignment_status: normaliseAssignmentStatus(assignment.assignment_status),
+    is_team_leader: Boolean(assignment.is_team_leader),
+    assigned_at: String(assignment.assigned_at ?? assignment.created_at ?? ""),
+    created_at: String(assignment.created_at ?? ""),
+    cleaner: cleaner ? mapCleaner(cleaner) : null,
+  };
+}
+
 function normaliseSpecialties(value: unknown): CleanerSpecialty[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1418,11 +1536,25 @@ function normaliseJobStatus(value: unknown): JobStatus {
   return "Not Assigned";
 }
 
+function normaliseAssignmentStatus(value: unknown) {
+  const status = String(value ?? "Assigned");
+
+  if (status === "Reassigned" || status === "Cancelled") {
+    return status;
+  }
+
+  return "Assigned";
+}
+
 function normaliseBookingStatus(value: unknown): BookingStatus {
   const status = String(value ?? "Pending Payment");
 
   if (
     status === "Confirmed" ||
+    status === "Draft" ||
+    status === "Pending Invoice" ||
+    status === "Invoiced" ||
+    status === "Paid" ||
     status === "Pending Confirmation" ||
     status === "Completed" ||
     status === "Cancelled"
@@ -1747,6 +1879,7 @@ function normaliseServiceData(value: unknown): BookingServiceData {
         typeof data.preferredCleanerName === "string"
           ? data.preferredCleanerName
           : "",
+      numberOfCleaners: Number(data.numberOfCleaners ?? 1),
       recurringSetup: normaliseRecurringSetup(data.recurringSetup),
       questions: Array.isArray(data.questions)
         ? data.questions.map((question) => ({
@@ -1768,6 +1901,7 @@ function normaliseServiceData(value: unknown): BookingServiceData {
     cleanerSelectionType: "auto",
     preferredCleanerId: "",
     preferredCleanerName: "",
+    numberOfCleaners: 1,
     recurringSetup: null,
     questions: [],
   };

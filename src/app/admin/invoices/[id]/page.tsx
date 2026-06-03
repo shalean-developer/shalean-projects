@@ -31,7 +31,7 @@ export default async function AdminInvoiceDetailPage({
     <AdminPage
       eyebrow={invoice.invoice_number}
       title="Invoice detail"
-      description={invoice.booking?.booking_reference ?? invoice.booking_id}
+      description={invoice.booking?.booking_reference ?? invoice.invoice_number}
       actions={
         <>
           <PrintButton />
@@ -109,9 +109,9 @@ function InvoiceLayout({ invoice }: { invoice: Invoice }) {
             </p>
           </section>
           <section className="grid gap-2 text-sm md:text-right">
-            <p className="font-medium">Booking</p>
+            <p className="font-medium">{booking ? "Booking" : "Invoice"}</p>
             <p className="font-mono text-muted-foreground">
-              {booking?.booking_reference ?? invoice.booking_id}
+              {booking?.booking_reference ?? invoice.invoice_number}
             </p>
             <p className="text-muted-foreground">
               {booking ? `${booking.booking_date} at ${booking.booking_time.slice(0, 5)}` : ""}
@@ -119,6 +119,20 @@ function InvoiceLayout({ invoice }: { invoice: Invoice }) {
           </section>
         </div>
         <Separator />
+        {invoice.line_items.length ? (
+          <>
+            <div className="grid gap-3">
+              {invoice.line_items.map((item) => (
+                <DetailRow
+                  key={item.id}
+                  label={`${item.booking_date} - ${item.service_type}`}
+                  value={formatRand(item.amount)}
+                />
+              ))}
+            </div>
+            <Separator />
+          </>
+        ) : null}
         <div className="grid gap-3">
           <DetailRow label="Service" value={booking?.service_name ?? "Cleaning service"} />
           <DetailRow
@@ -133,6 +147,8 @@ function InvoiceLayout({ invoice }: { invoice: Invoice }) {
           <DetailRow label="Total" value={formatRand(invoice.total)} />
           <DetailRow label="Amount paid" value={formatRand(invoice.amount_paid)} />
           <DetailRow label="Balance due" value={formatRand(invoice.balance_due)} />
+          <DetailRow label="Due date" value={invoice.due_date ?? "Not set"} />
+          <DetailRow label="Payment link" value={invoice.payment_link ?? "Not generated"} />
           <DetailRow label="Issued at" value={invoice.issued_at ? formatTimestamp(invoice.issued_at) : "Not issued"} />
           <DetailRow label="Paid at" value={invoice.paid_at ? formatTimestamp(invoice.paid_at) : "Not paid"} />
         </div>

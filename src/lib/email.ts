@@ -52,12 +52,12 @@ export async function sendAutomationEmail({
 export async function sendInvoiceEmail(
   invoice: Invoice
 ): Promise<EmailResult> {
-  if (!invoice.booking) {
+  if (!invoice.booking && !invoice.customer) {
     return { sent: false, error: "Invoice booking details are missing." };
   }
 
   return sendEmail({
-    to: invoice.booking.customer_email,
+    to: invoice.booking?.customer_email ?? invoice.customer?.email ?? "",
     subject: `Shalean invoice ${invoice.invoice_number}`,
     html: invoiceEmailHtml(invoice),
     text: invoiceEmailText(invoice),
@@ -265,7 +265,7 @@ function automationTemplate(
 function invoiceEmailHtml(invoice: Invoice) {
   const booking = invoice.booking;
 
-  if (!booking) {
+  if (!booking && !invoice.customer) {
     return "";
   }
 
@@ -273,7 +273,12 @@ function invoiceEmailHtml(invoice: Invoice) {
     `Invoice ${invoice.invoice_number}`,
     `
       <p>Your Shalean invoice is ready.</p>
-      ${invoiceTable(invoice, booking)}
+      ${invoiceTable(invoice, booking ?? null)}
+      ${
+        invoice.payment_link
+          ? `<p><a href="${escapeHtml(invoice.payment_link)}">View and pay invoice</a></p>`
+          : ""
+      }
     `
   );
 }
@@ -281,36 +286,53 @@ function invoiceEmailHtml(invoice: Invoice) {
 function invoiceEmailText(invoice: Invoice) {
   const booking = invoice.booking;
 
-  if (!booking) {
+  if (!booking && !invoice.customer) {
     return "";
   }
 
   return [
     `Invoice ${invoice.invoice_number}`,
     "",
-    `Booking reference: ${booking.booking_reference}`,
-    `Service: ${booking.service_name}`,
-    `Booking date: ${booking.booking_date}`,
+    ...(booking
+      ? [
+          `Booking reference: ${booking.booking_reference}`,
+          `Service: ${booking.service_name}`,
+          `Booking date: ${booking.booking_date}`,
+        ]
+      : invoice.line_items.map(
+          (item) =>
+            `${item.booking_date} - ${item.service_type} - ${formatMoney(item.amount)}`
+        )),
     `Subtotal: ${formatMoney(invoice.subtotal)}`,
     `Total: ${formatMoney(invoice.total)}`,
     `Amount paid: ${formatMoney(invoice.amount_paid)}`,
     `Balance due: ${formatMoney(invoice.balance_due)}`,
+    `Due date: ${invoice.due_date ?? "Not set"}`,
+    `Payment link: ${invoice.payment_link ?? "Sign in to view invoice"}`,
     `Invoice status: ${invoice.invoice_status}`,
   ].join("\n");
 }
 
-function invoiceTable(invoice: Invoice, booking: BookingWithService) {
+function invoiceTable(invoice: Invoice, booking: BookingWithService | null) {
   const rows = [
     ["Invoice number", invoice.invoice_number],
-    ["Booking reference", booking.booking_reference],
-    ["Customer", booking.customer_name],
-    ["Service", booking.service_name],
-    ["Add-ons", formatAddons(booking)],
-    ["Booking date", booking.booking_date],
+    ["Customer", booking?.customer_name ?? invoice.customer?.full_name ?? "Customer"],
+    ...(booking
+      ? [
+          ["Booking reference", booking.booking_reference],
+          ["Service", booking.service_name],
+          ["Add-ons", formatAddons(booking)],
+          ["Booking date", booking.booking_date],
+        ]
+      : invoice.line_items.map((item) => [
+          item.booking_id,
+          `${item.booking_date} - ${item.service_type} - ${formatMoney(item.amount)}`,
+        ])),
     ["Subtotal", formatMoney(invoice.subtotal)],
     ["Total", formatMoney(invoice.total)],
     ["Amount paid", formatMoney(invoice.amount_paid)],
     ["Balance due", formatMoney(invoice.balance_due)],
+    ["Due date", invoice.due_date ?? "Not set"],
     ["Invoice status", invoice.invoice_status],
   ];
 

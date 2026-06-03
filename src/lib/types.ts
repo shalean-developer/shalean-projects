@@ -16,6 +16,10 @@ export type CleaningService = {
 };
 
 export type BookingStatus =
+  | "Draft"
+  | "Pending Invoice"
+  | "Invoiced"
+  | "Paid"
   | "Pending Payment"
   | "Pending Confirmation"
   | "Confirmed"
@@ -23,6 +27,10 @@ export type BookingStatus =
   | "Cancelled";
 
 export const bookingStatuses: BookingStatus[] = [
+  "Draft",
+  "Pending Invoice",
+  "Invoiced",
+  "Paid",
   "Pending Payment",
   "Pending Confirmation",
   "Confirmed",
@@ -166,6 +174,7 @@ export type BookingAssignment = {
   booking_id: string;
   cleaner_id: string;
   assignment_status: AssignmentStatus;
+  is_team_leader: boolean;
   assigned_at: string;
   created_at: string;
   cleaner?: Cleaner | null;
@@ -204,6 +213,7 @@ export type BookingServiceData = {
   cleanerSelectionType?: "auto" | "preferred";
   preferredCleanerId?: string;
   preferredCleanerName?: string;
+  numberOfCleaners?: number;
   recurringSetup?: {
     frequency: "Weekly" | "Bi-weekly" | "Monthly";
     preferredDay: string;
@@ -252,6 +262,7 @@ export type BookingWithService = {
   payment_status: PaymentStatus;
   payment_type: PaymentType | null;
   total_amount: number;
+  number_of_cleaners: number;
   amount_paid: number;
   balance_due: number;
   confirmed_at: string | null;
@@ -260,6 +271,8 @@ export type BookingWithService = {
   assigned_cleaner_id: string | null;
   job_status: JobStatus;
   assigned_cleaner: Cleaner | null;
+  assignments: BookingAssignment[];
+  assigned_cleaners: Cleaner[];
   can_reschedule: boolean;
   can_cancel: boolean;
   created_at: string;
@@ -378,7 +391,7 @@ export type Review = {
 
 export type Invoice = {
   id: string;
-  booking_id: string;
+  booking_id: string | null;
   customer_id: string | null;
   invoice_number: string;
   invoice_status: InvoiceStatus;
@@ -386,11 +399,26 @@ export type Invoice = {
   total: number;
   amount_paid: number;
   balance_due: number;
+  due_date: string | null;
+  payment_link: string | null;
   issued_at: string | null;
   paid_at: string | null;
   created_at: string;
+  line_items: InvoiceLineItem[];
   booking?: BookingWithService | null;
   customer?: Customer | null;
+};
+
+export type InvoiceLineItem = {
+  id: string;
+  invoice_id: string;
+  booking_id: string;
+  description: string;
+  service_type: string;
+  booking_date: string;
+  amount: number;
+  created_at: string;
+  booking?: BookingWithService | null;
 };
 
 export type RecurringPlanChangeRequest = {

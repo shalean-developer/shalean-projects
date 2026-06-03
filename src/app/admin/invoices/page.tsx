@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Eye, FileText } from "lucide-react";
 
+import { generateMonthlyInvoiceAction } from "@/app/actions";
 import { AdminPage } from "@/components/admin/admin-page";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import { formatRand } from "@/lib/pricing";
 import { getV15SchemaStatus } from "@/lib/supabase/schema";
-import { getInvoices } from "@/lib/supabase/queries";
+import { getCustomers, getInvoices } from "@/lib/supabase/queries";
 import { invoiceStatuses, type Invoice, type InvoiceStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export default async function AdminInvoicesPage({
   }
 
   const params = await searchParams;
-  const invoices = await getInvoices();
+  const [invoices, customers] = await Promise.all([getInvoices(), getCustomers()]);
   const filtered = params.status
     ? invoices.filter((invoice) => invoice.invoice_status === params.status)
     : invoices;
@@ -43,6 +44,46 @@ export default async function AdminInvoicesPage({
       title="Invoices"
       description="View invoices, filter by status, and manage payment state."
     >
+        <Card className="mb-5 rounded-lg">
+          <CardHeader>
+            <CardTitle>Monthly invoice</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form
+              action={generateMonthlyInvoiceAction}
+              className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_160px_160px_auto_auto]"
+            >
+              <select name="customer_id" required className="h-9 rounded-lg border border-input bg-background px-3 text-sm">
+                <option value="">Choose customer</option>
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.full_name}
+                  </option>
+                ))}
+              </select>
+              <input
+                name="month"
+                type="month"
+                required
+                defaultValue={new Date().toISOString().slice(0, 7)}
+                className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
+              />
+              <input
+                name="due_date"
+                type="date"
+                required
+                className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
+              />
+              <label className="flex h-9 items-center gap-2 rounded-lg border bg-background px-3 text-sm">
+                <input name="send_invoice" type="checkbox" className="size-4" />
+                Email
+              </label>
+              <button className={buttonVariants()} type="submit">
+                Generate
+              </button>
+            </form>
+          </CardContent>
+        </Card>
         <Card className="rounded-lg">
           <CardHeader>
             <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">

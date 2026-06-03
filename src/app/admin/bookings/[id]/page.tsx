@@ -245,21 +245,17 @@ export default async function AdminBookingDetailPage({
             <DetailCard title="Cleaner Assignment">
               <div className="grid gap-3">
                 <DetailRow
-                  label="Assigned Cleaner"
-                  value={booking.assigned_cleaner?.full_name ?? "Not assigned"}
+                  label="Assigned Cleaners"
+                  value={
+                    booking.assigned_cleaners.length
+                      ? booking.assigned_cleaners.map((cleaner) => cleaner.full_name).join(", ")
+                      : "Not assigned"
+                  }
                 />
-                {booking.assigned_cleaner ? (
-                  <>
-                    <DetailRow
-                      label="Cleaner Phone"
-                      value={booking.assigned_cleaner.phone}
-                    />
-                    <DetailRow
-                      label="Cleaner Email"
-                      value={booking.assigned_cleaner.email}
-                    />
-                  </>
-                ) : null}
+                <DetailRow
+                  label="Requested Cleaners"
+                  value={String(booking.number_of_cleaners)}
+                />
                 <Separator />
                 <div className="grid gap-2">
                   <p className="text-sm text-muted-foreground">
@@ -285,7 +281,7 @@ export default async function AdminBookingDetailPage({
                 </div>
                 <CleanerAssignmentControls
                   bookingId={booking.id}
-                  currentCleanerId={booking.assigned_cleaner_id}
+                  currentAssignments={booking.assignments}
                   matchingCleaners={matchingCleaners}
                 />
               </div>

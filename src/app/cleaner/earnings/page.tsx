@@ -63,11 +63,13 @@ export default async function CleanerEarningsPage() {
                   <StatusBadge status={earning.status} />
                 </div>
                 <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                  <Detail label="Booking ID" value={earning.booking?.booking_reference ?? earning.booking_id ?? "Booking"} />
+                  <Detail label="Booking date" value={earning.booking?.booking_date ?? "Not set"} />
+                  <Detail label="Customer" value={earning.booking?.customer_name ?? "Customer"} />
                   <Detail label="Booking amount" value={formatRand(earning.booking_amount)} />
-                  <Detail label="Service fee" value={formatRand(earning.service_fee)} />
-                  <Detail label="Net value" value={formatRand(earning.net_booking_value)} />
+                  <Detail label="Payment status" value={earning.booking?.payment_status ?? "Pending Payment"} />
                   <Detail label="Calculation" value={formatCalculation(earning)} />
-                  <Detail label="Final payout" value={formatRand(earning.net_amount)} />
+                  <Detail label="Cleaner earning" value={formatRand(earning.net_amount)} />
                 </div>
               </div>
             ))

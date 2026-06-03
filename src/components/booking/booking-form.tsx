@@ -69,6 +69,7 @@ const stepFields: Record<number, (keyof BookingWizardValues)[]> = {
   0: ["serviceSlug"],
   1: ["serviceData", "selectedAddons", "recurringPreferredDays"],
   2: [
+    "numberOfCleaners",
     "cleanerSelectionType",
     "preferredCleanerId",
     "bookingDate",
@@ -239,6 +240,7 @@ export function BookingForm({
     serviceData: watchedServiceData,
     selectedAddons: watchedSelectedAddons,
     recurringPreferredDays: watchedRecurringPreferredDays,
+    numberOfCleaners: Number(watchedValues.numberOfCleaners ?? 1),
     cleanerSelectionType: watchedValues.cleanerSelectionType ?? "auto",
   };
   const selectedService = useMemo(
@@ -263,6 +265,9 @@ export function BookingForm({
   const selectedCleaner = matchingCleaners.find(
     (cleaner) => cleaner.id === values.preferredCleanerId
   );
+  const customerCanChooseCleaners = selectedService
+    ? canCustomerChooseCleaners(selectedService.name)
+    : true;
   const selectedAddons = selectedService
     ? getSelectedAddons(selectedService, values.selectedAddons)
     : [];
@@ -342,11 +347,19 @@ export function BookingForm({
   }, [currentStep, values.serviceSlug]);
 
   useEffect(() => {
+    if (!customerCanChooseCleaners) {
+      form.setValue("numberOfCleaners", 1, { shouldValidate: false });
+      form.setValue("cleanerSelectionType", "auto", { shouldValidate: false });
+      form.setValue("preferredCleanerId", "", { shouldValidate: false });
+      form.setValue("preferredCleanerName", "", { shouldValidate: false });
+      return;
+    }
+
     if (values.cleanerSelectionType === "auto") {
       form.setValue("preferredCleanerId", "", { shouldValidate: false });
       form.setValue("preferredCleanerName", "", { shouldValidate: false });
     }
-  }, [form, values.cleanerSelectionType]);
+  }, [customerCanChooseCleaners, form, values.cleanerSelectionType]);
 
   useEffect(() => {
     if (values.paymentType !== "Full Payment") {
@@ -366,6 +379,7 @@ export function BookingForm({
     form.setValue("recurringPreferredDays", ["Monday"], {
       shouldValidate: true,
     });
+    form.setValue("numberOfCleaners", 1, { shouldValidate: true });
     form.setValue("cleanerSelectionType", "auto", { shouldValidate: true });
     form.setValue("preferredCleanerId", "", { shouldValidate: true });
     form.setValue("preferredCleanerName", "", { shouldValidate: true });
@@ -374,6 +388,7 @@ export function BookingForm({
       serviceData,
       selectedAddons: [],
       recurringPreferredDays: ["Monday"],
+      numberOfCleaners: 1,
       cleanerSelectionType: "auto",
       preferredCleanerId: "",
       preferredCleanerName: "",
@@ -431,6 +446,12 @@ export function BookingForm({
     setSubmitError("");
     const payload = form.getValues();
     if (payload.cleanerSelectionType === "auto") {
+      payload.preferredCleanerId = "";
+      payload.preferredCleanerName = "";
+    }
+    if (selectedService && !canCustomerChooseCleaners(selectedService.name)) {
+      payload.numberOfCleaners = 1;
+      payload.cleanerSelectionType = "auto";
       payload.preferredCleanerId = "";
       payload.preferredCleanerName = "";
     }
@@ -656,50 +677,77 @@ export function BookingForm({
           <StepCard icon={UserCheck} title="Cleaner & Schedule" variant="plain">
             <div className="grid gap-5">
               <GroupedPanel title="Cleaner preference">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <CleanerModeCard
-                    checked={values.cleanerSelectionType === "auto"}
-                    title="Auto-assign best available cleaner"
-                    description="Shalean will match this booking with the best available cleaner."
-                    onClick={chooseAutoAssign}
-                  />
-                  <CleanerModeCard
-                    checked={values.cleanerSelectionType === "preferred"}
-                    title="Select a preferred cleaner"
-                    description="Choose a cleaner preference for the operations team to review."
-                    onClick={() =>
-                      form.setValue("cleanerSelectionType", "preferred", {
-                        shouldValidate: true,
-                      })
-                    }
-                  />
-                </div>
+                {customerCanChooseCleaners ? (
+                  <div className="grid gap-5">
+                    <Field
+                      label="Number of cleaners"
+                      error={form.formState.errors.numberOfCleaners?.message}
+                    >
+                      <Controller
+                        control={form.control}
+                        name="numberOfCleaners"
+                        render={({ field }) => (
+                          <div className="max-w-64">
+                            <NumberStepper
+                              value={Number(field.value ?? 1)}
+                              min={1}
+                              max={5}
+                              onChange={field.onChange}
+                            />
+                          </div>
+                        )}
+                      />
+                    </Field>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <CleanerModeCard
+                        checked={values.cleanerSelectionType === "auto"}
+                        title="Auto-assign best available cleaner"
+                        description="Shalean will match this booking with the best available cleaner."
+                        onClick={chooseAutoAssign}
+                      />
+                      <CleanerModeCard
+                        checked={values.cleanerSelectionType === "preferred"}
+                        title="Select a preferred cleaner"
+                        description="Choose a cleaner preference for the operations team to review."
+                        onClick={() =>
+                          form.setValue("cleanerSelectionType", "preferred", {
+                            shouldValidate: true,
+                          })
+                        }
+                      />
+                    </div>
 
-                {values.cleanerSelectionType === "preferred" ? (
-                  <div className="mt-4 grid gap-3">
-                    {matchingCleaners.length ? (
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {matchingCleaners.map((cleaner) => (
-                          <CleanerCard
-                            key={cleaner.id}
-                            cleaner={cleaner}
-                            selected={cleaner.id === values.preferredCleanerId}
-                            hasSchedule={Boolean(values.bookingDate && values.bookingTime)}
-                            onSelect={() => choosePreferredCleaner(cleaner)}
-                          />
-                        ))}
+                    {values.cleanerSelectionType === "preferred" ? (
+                      <div className="mt-4 grid gap-3">
+                        {matchingCleaners.length ? (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {matchingCleaners.map((cleaner) => (
+                              <CleanerCard
+                                key={cleaner.id}
+                                cleaner={cleaner}
+                                selected={cleaner.id === values.preferredCleanerId}
+                                hasSchedule={Boolean(values.bookingDate && values.bookingTime)}
+                                onSelect={() => choosePreferredCleaner(cleaner)}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
+                            No active cleaners are available to show yet. You can still use auto-assign.
+                          </p>
+                        )}
+                        {preferredCleanerMissing ? (
+                          <FieldError message="The preferred cleaner does not match the current service. Choose another cleaner or use auto-assign." />
+                        ) : null}
+                        <FieldError message={form.formState.errors.preferredCleanerId?.message} />
                       </div>
-                    ) : (
-                      <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
-                        No active cleaners are available to show yet. You can still use auto-assign.
-                      </p>
-                    )}
-                    {preferredCleanerMissing ? (
-                      <FieldError message="The preferred cleaner does not match the current service. Choose another cleaner or use auto-assign." />
                     ) : null}
-                    <FieldError message={form.formState.errors.preferredCleanerId?.message} />
                   </div>
-                ) : null}
+                ) : (
+                  <p className="rounded-lg border border-dashed bg-background p-4 text-sm leading-6 text-muted-foreground">
+                    The operations team will build and assign the cleaning team after checkout.
+                  </p>
+                )}
               </GroupedPanel>
 
               <GroupedPanel title="Schedule">
@@ -1789,13 +1837,16 @@ function getCalendarDays(month: Date) {
 function NumberStepper({
   value,
   min,
+  max,
   onChange,
 }: {
   value: number;
   min: number;
+  max?: number;
   onChange: (value: number) => void;
 }) {
   const normalizedValue = Number.isFinite(value) ? value : min;
+  const canIncrease = max === undefined || normalizedValue < max;
 
   return (
     <div className="grid h-12 grid-cols-[44px_minmax(0,1fr)_44px] overflow-hidden rounded-lg border border-border/80 bg-card shadow-sm">
@@ -1815,7 +1866,8 @@ function NumberStepper({
         type="button"
         aria-label="Increase value"
         className="grid place-items-center border-l border-border/80 text-primary transition hover:bg-primary/5"
-        onClick={() => onChange(normalizedValue + 1)}
+        disabled={!canIncrease}
+        onClick={() => onChange(max === undefined ? normalizedValue + 1 : Math.min(max, normalizedValue + 1))}
       >
         <Plus className="size-4" />
       </button>
@@ -2161,13 +2213,18 @@ function BookingReview({
         items={[
           [
             "Selection",
-            values.cleanerSelectionType === "preferred"
+            !canCustomerChooseCleaners(service.name)
+              ? "Admin-assigned team"
+              : values.cleanerSelectionType === "preferred"
               ? "Preferred cleaner"
               : "Auto-assign best available cleaner",
           ],
+          ["Number of cleaners", String(values.numberOfCleaners)],
           [
             "Preferred cleaner",
-            values.cleanerSelectionType === "preferred"
+            !canCustomerChooseCleaners(service.name)
+              ? "Assigned after booking"
+              : values.cleanerSelectionType === "preferred"
               ? values.preferredCleanerName || "Not selected"
               : "Not applicable",
           ],
@@ -2303,6 +2360,10 @@ function getStepHeroCopy(
     title: "What cleaning do you need?",
     description: "Choose the service that best fits your space.",
   };
+}
+
+function canCustomerChooseCleaners(serviceName: string) {
+  return serviceName !== "Deep Cleaning" && serviceName !== "Moving Cleaning";
 }
 
 function getDefaultServiceData(service: ServiceConfig) {
