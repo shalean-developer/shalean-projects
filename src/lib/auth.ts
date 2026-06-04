@@ -37,7 +37,7 @@ export async function requireUser(redirectTo = "/account") {
 
 export async function requireCustomer(redirectTo = "/account") {
   const user = await requireUser(redirectTo);
-  const customer = await ensureCustomerForUser(user);
+  const customer = await getCustomerForAccountUser(user);
 
   return { user, customer };
 }
@@ -49,19 +49,23 @@ export async function getOptionalCustomer() {
     return null;
   }
 
-  if (getUserDeclaredRole(user) === "cleaner" || isAdminUser(user)) {
+  if (await shouldUseAdminDashboard(user)) {
     return null;
   }
 
-  const cleaner = await getCleanerByUser(user);
+  if (await shouldUseCleanerDashboard(user)) {
+    return null;
+  }
 
-  if (cleaner) {
+  const customer = await findCustomerForUser(user);
+
+  if (!customer) {
     return null;
   }
 
   return {
     user,
-    customer: await ensureCustomerForUser(user),
+    customer,
   };
 }
 
@@ -123,15 +127,92 @@ async function getCleanerByUser(
   return getCleanerByUserIdOrEmail(user.id, user.email);
 }
 
-export async function ensureCustomerForUser(user: User): Promise<Customer> {
-  if (getUserDeclaredRole(user) === "cleaner" || isAdminUser(user)) {
-    throw new Error("This authenticated user is not a customer.");
+async function getCustomerForAccountUser(user: User): Promise<Customer> {
+  if (await shouldUseAdminDashboard(user)) {
+    redirect("/admin");
   }
 
-  const cleaner = await getCleanerByUser(user);
+  if (await shouldUseCleanerDashboard(user)) {
+    redirect("/cleaner");
+  }
 
-  if (cleaner) {
-    throw new Error("Cleaner accounts cannot be used as customer profiles.");
+  const customer = await findCustomerForUser(user);
+
+  if (!customer) {
+    redirect(`/signup?redirect=${encodeURIComponent("/account")}`);
+  }
+
+  return customer;
+}
+
+async function shouldUseAdminDashboard(user: User) {
+  if (isAdminUser(user)) {
+    return true;
+  }
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("admins")
+    .select("id, status")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (isSupabaseSchemaMissingError(normalizedError)) {
+      return false;
+    }
+
+    throw normalizedError;
+  }
+
+  return Boolean(data && data.status !== "Inactive");
+}
+
+async function shouldUseCleanerDashboard(user: User) {
+  return Boolean(await getCleanerByUser(user));
+}
+
+async function findCustomerForUser(user: User): Promise<Customer | null> {
+  const supabase = getSupabaseAdmin();
+  let { data, error } = await supabase
+    .from("customers")
+    .select("id, user_id, full_name, email, phone, created_at")
+    .eq("user_id", user.id)
+    .eq("account_role", "customer")
+    .maybeSingle();
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyResult = await supabase
+      .from("customers")
+      .select("id, user_id, full_name, email, phone, created_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return data ? mapCustomer(data) : null;
+}
+
+export async function ensureCustomerForUser(user: User): Promise<Customer> {
+  if (await shouldUseAdminDashboard(user)) {
+    redirect("/admin");
+  }
+
+  if (await shouldUseCleanerDashboard(user)) {
+    redirect("/cleaner");
   }
 
   const supabase = getSupabaseAdmin();
