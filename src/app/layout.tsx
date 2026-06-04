@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { rootPublicMetadata } from "@/lib/public-metadata";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,10 +13,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Shalean Cleaning Services",
-  description: "Book residential and office cleaning services with Shalean.",
-};
+export const metadata: Metadata = rootPublicMetadata;
 
 export default function RootLayout({
   children,
