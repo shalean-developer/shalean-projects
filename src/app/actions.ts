@@ -57,7 +57,10 @@ import {
 } from "@/lib/pricing";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { toSupabaseError } from "@/lib/supabase/errors";
+import {
+  isSupabaseSchemaMissingError,
+  toSupabaseError,
+} from "@/lib/supabase/errors";
 import {
   getBookingById,
   getCleanerById,
@@ -94,6 +97,7 @@ import {
   type Cleaner,
   type JobStatus,
   type PaymentType,
+  type RecurringFrequency,
   payrollStatuses,
   supportPriorities,
   supportTicketStatuses,
@@ -909,20 +913,11 @@ export async function createAdminDraftBooking(formData: FormData) {
       .from("customers")
       .select("id, full_name, email, phone")
       .eq("id", customer.id)
-      .eq("account_role", "customer")
       .single(),
   ]);
 
   if (customerResult.error) {
     throw toSupabaseError(customerResult.error);
-  }
-
-  const [serviceForValidation] = await Promise.all([
-    getServiceConfigBySlug(serviceSlug, { includeInactive: true }),
-  ]);
-
-  if (!serviceForValidation) {
-    throw new Error("Selected service is no longer available.");
   }
 
   const serviceData = buildAdminBookingServiceData(service, formData);
@@ -1021,40 +1016,67 @@ export async function createAdminDraftBooking(formData: FormData) {
       recurringFrequency,
       preferredDayLabel
     );
-    const { data: recurringPlan, error: recurringError } = await getSupabaseAdmin()
+    const recurringPayload = {
+      customer_id: customer.id,
+      service_id: service.id,
+      address_id: recurringAddressId,
+      frequency: recurringFrequency,
+      preferred_day: preferredDayLabel,
+      preferred_days: recurringPreferredDays,
+      preferred_time: bookingTime,
+      service_data: {
+        serviceSlug: service.slug,
+        serviceName: service.name,
+        pricingBreakdown,
+        cleanerSelectionType: "auto",
+        numberOfCleaners: clampCleanerCount(
+          getNumber(formData, "number_of_cleaners") || 1
+        ),
+        questions: service.questions.map((question) => ({
+          id: question.id,
+          label: question.label,
+          value: serviceData[question.id] ?? "",
+        })),
+      },
+      selected_addons: selectedAddons,
+      estimated_price: estimatedTotal,
+      status: "Active",
+      next_booking_date: nextBookingDate,
+    };
+    let { data: recurringPlan, error: recurringError } = await getSupabaseAdmin()
       .from("recurring_bookings")
-      .insert({
-        customer_id: customer.id,
-        service_id: service.id,
-        address_id: recurringAddressId,
-        frequency: recurringFrequency,
-        preferred_day: preferredDayLabel,
-        preferred_days: recurringPreferredDays,
-        preferred_time: bookingTime,
-        service_data: {
-          serviceSlug: service.slug,
-          serviceName: service.name,
-          pricingBreakdown,
-          cleanerSelectionType: "auto",
-          numberOfCleaners: clampCleanerCount(
-            getNumber(formData, "number_of_cleaners") || 1
-          ),
-          questions: service.questions.map((question) => ({
-            id: question.id,
-            label: question.label,
-            value: serviceData[question.id] ?? "",
-          })),
-        },
-        selected_addons: selectedAddons,
-        estimated_price: estimatedTotal,
-        status: "Active",
-        next_booking_date: nextBookingDate,
-      })
+      .insert(recurringPayload)
       .select("id")
       .single();
 
     if (recurringError) {
+      const normalizedError = toSupabaseError(recurringError);
+
+      if (
+        recurringFrequency === "Custom days" ||
+        !isSupabaseSchemaMissingError(normalizedError)
+      ) {
+        throw normalizedError;
+      }
+
+      const legacyPayload: Record<string, unknown> = { ...recurringPayload };
+      delete legacyPayload.preferred_days;
+      const legacyResult = await getSupabaseAdmin()
+        .from("recurring_bookings")
+        .insert(legacyPayload)
+        .select("id")
+        .single();
+
+      recurringPlan = legacyResult.data;
+      recurringError = legacyResult.error;
+    }
+
+    if (recurringError) {
       throw toSupabaseError(recurringError);
+    }
+
+    if (!recurringPlan) {
+      throw new Error("Recurring plan was created but no id was returned.");
     }
 
     const { error: updateError } = await getSupabaseAdmin()
@@ -1071,6 +1093,143 @@ export async function createAdminDraftBooking(formData: FormData) {
 
   revalidatePath("/admin/bookings");
   redirect(`/admin/bookings/${String(data.id)}`);
+}
+
+async function resolveAdminBookingCustomer(
+  formData: FormData,
+  addressValues: { address: string; suburb: string; city: string }
+) {
+  const mode = String(formData.get("customer_mode") ?? "existing");
+
+  if (mode !== "new") {
+    return {
+      id: getRequiredString(formData, "customer_id"),
+      addressId: null as string | null,
+    };
+  }
+
+  const fullName = getRequiredString(formData, "new_customer_full_name");
+  const email = getRequiredString(formData, "new_customer_email").toLowerCase();
+  const phoneInput = getRequiredString(formData, "new_customer_phone");
+  const phone = normalizeSouthAfricanPhone(phoneInput) ?? phoneInput.trim();
+
+  const duplicate = await findDuplicateCustomer({ email, phone });
+
+  if (duplicate) {
+    return {
+      id: duplicate.id,
+      addressId: await createAdminCustomerAddress(duplicate.id, addressValues),
+    };
+  }
+
+  const payload = {
+    full_name: fullName,
+    email,
+    phone,
+    account_role: "customer",
+    notes: getOptionalString(formData, "new_customer_notes"),
+  };
+  const { data, error } = await getSupabaseAdmin()
+    .from("customers")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (normalizedError.name === "SupabaseSchemaMissingError") {
+      throw new Error(
+        "Apply the role-separation migration before creating login-free customers from admin bookings."
+      );
+    }
+
+    throw normalizedError;
+  }
+
+  return {
+    id: String(data.id),
+    addressId: await createAdminCustomerAddress(String(data.id), addressValues),
+  };
+}
+
+async function findDuplicateCustomer({
+  email,
+  phone,
+}: {
+  email: string;
+  phone: string;
+}) {
+  const filters = [`email.ilike.${email}`];
+
+  if (phone) {
+    filters.push(`phone.eq.${phone}`);
+  }
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("customers")
+    .select("id")
+    .or(filters.join(","))
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return data ? { id: String(data.id) } : null;
+}
+
+async function createAdminCustomerAddress(
+  customerId: string,
+  values: { address: string; suburb: string; city: string }
+) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("customer_addresses")
+    .insert({
+      customer_id: customerId,
+      label: "Admin booking address",
+      address: values.address,
+      suburb: values.suburb,
+      city: values.city,
+      is_default: false,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw toSupabaseError(error);
+  }
+
+  return String(data.id);
+}
+
+function getAdminRecurringSelection(
+  formData: FormData,
+  bookingDate: string
+): [RecurringFrequency | null, string[]] {
+  const frequencyInput = String(formData.get("frequency") ?? "Once-off");
+
+  if (frequencyInput === "Once-off") {
+    return [null, []];
+  }
+
+  const frequency = normalizeRecurringFrequency(frequencyInput);
+
+  if (!frequency) {
+    throw new Error("Choose a valid booking frequency.");
+  }
+
+  const selectedDays = normalisePreferredDays(formData.getAll("custom_days"));
+  const fallbackDay = weekdayNameFromDate(bookingDate);
+  const preferredDays =
+    frequency === "Custom days" || frequency === "Weekly"
+      ? selectedDays.length
+        ? selectedDays
+        : [fallbackDay]
+      : [fallbackDay];
+
+  return [frequency, preferredDays];
 }
 
 export async function createCleaner(values: CleanerFormValues) {

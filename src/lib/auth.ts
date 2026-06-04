@@ -49,6 +49,16 @@ export async function getOptionalCustomer() {
     return null;
   }
 
+  if (getUserDeclaredRole(user) === "cleaner" || isAdminUser(user)) {
+    return null;
+  }
+
+  const cleaner = await getCleanerByUser(user);
+
+  if (cleaner) {
+    return null;
+  }
+
   return {
     user,
     customer: await ensureCustomerForUser(user),
@@ -125,12 +135,29 @@ export async function ensureCustomerForUser(user: User): Promise<Customer> {
   }
 
   const supabase = getSupabaseAdmin();
-  const { data: existing, error: existingError } = await supabase
+  let { data: existing, error: existingError } = await supabase
     .from("customers")
     .select("id, user_id, full_name, email, phone, created_at")
     .eq("user_id", user.id)
     .eq("account_role", "customer")
     .maybeSingle();
+
+  if (existingError) {
+    const normalizedError = toSupabaseError(existingError);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyResult = await supabase
+      .from("customers")
+      .select("id, user_id, full_name, email, phone, created_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    existing = legacyResult.data;
+    existingError = legacyResult.error;
+  }
 
   if (existingError) {
     throw toSupabaseError(existingError);
@@ -140,26 +167,50 @@ export async function ensureCustomerForUser(user: User): Promise<Customer> {
     return mapCustomer(existing);
   }
 
-  const { data, error } = await supabase
+  const customerPayload = {
+    user_id: user.id,
+    full_name:
+      typeof user.user_metadata?.full_name === "string"
+        ? user.user_metadata.full_name
+        : user.email?.split("@")[0] ?? "Shalean customer",
+    email: user.email ?? "",
+    phone:
+      typeof user.user_metadata?.phone === "string"
+        ? user.user_metadata.phone
+        : null,
+    account_role: "customer",
+  };
+  let { data, error } = await supabase
     .from("customers")
-    .insert({
-      user_id: user.id,
-      full_name:
-        typeof user.user_metadata?.full_name === "string"
-          ? user.user_metadata.full_name
-          : user.email?.split("@")[0] ?? "Shalean customer",
-      email: user.email ?? "",
-      phone:
-        typeof user.user_metadata?.phone === "string"
-          ? user.user_metadata.phone
-          : null,
-      account_role: "customer",
-    })
+    .insert(customerPayload)
     .select("id, user_id, full_name, email, phone, created_at")
     .single();
 
   if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyPayload = { ...customerPayload };
+    delete (legacyPayload as Partial<typeof customerPayload>).account_role;
+    const legacyResult = await supabase
+      .from("customers")
+      .insert(legacyPayload)
+      .select("id, user_id, full_name, email, phone, created_at")
+      .single();
+
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+
+  if (error) {
     throw toSupabaseError(error);
+  }
+
+  if (!data) {
+    throw new Error("Customer profile was created but no id was returned.");
   }
 
   return mapCustomer(data);
@@ -206,7 +257,7 @@ function getUserDeclaredRole(user: User) {
 function mapCustomer(customer: Record<string, unknown>): Customer {
   return {
     id: String(customer.id ?? ""),
-    user_id: typeof customer.user_id === "string" ? customer.user_id : null,
+    user_id: String(customer.user_id ?? ""),
     full_name: String(customer.full_name ?? ""),
     email: String(customer.email ?? ""),
     phone: typeof customer.phone === "string" ? customer.phone : null,

@@ -7,7 +7,10 @@ import {
   initializePaystackTransaction,
   verifyPaystackTransaction,
 } from "@/lib/paystack";
-import { getNextRecurringDate } from "@/lib/recurring-schedule";
+import {
+  getNextRecurringDate,
+  normalisePreferredDays,
+} from "@/lib/recurring-schedule";
 import {
   sendBookingConfirmationEmail,
   sendPaymentReceiptEmail,
@@ -15,7 +18,10 @@ import {
 import { generateInvoiceForBooking } from "@/lib/invoices";
 import { createCustomerInAppNotification } from "@/lib/notifications";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { toSupabaseError } from "@/lib/supabase/errors";
+import {
+  isSupabaseSchemaMissingError,
+  toSupabaseError,
+} from "@/lib/supabase/errors";
 import { getBookingById } from "@/lib/supabase/queries";
 import type {
   BookingServiceData,
@@ -360,26 +366,55 @@ async function activateRecurringPlanForBooking(bookingId: string) {
     booking.recurringSetup.preferredDay
   );
 
-  const { data, error } = await getSupabaseAdmin()
+  const recurringPayload = {
+    customer_id: booking.customer_id,
+    service_id: booking.service_id,
+    address_id: booking.recurringSetup.addressId,
+    frequency: booking.recurringSetup.frequency,
+    preferred_day: booking.recurringSetup.preferredDay,
+    preferred_days: normalisePreferredDays(
+      booking.recurringSetup.preferredDays?.length
+        ? booking.recurringSetup.preferredDays
+        : booking.recurringSetup.preferredDay
+    ),
+    preferred_time: booking.recurringSetup.preferredTime,
+    service_data: withoutRecurringSetup(booking.service_data),
+    selected_addons: booking.selected_addons,
+    estimated_price: booking.estimated_price,
+    status: "Active",
+    next_booking_date: nextBookingDate,
+  };
+  let { data, error } = await getSupabaseAdmin()
     .from("recurring_bookings")
-    .insert({
-      customer_id: booking.customer_id,
-      service_id: booking.service_id,
-      address_id: booking.recurringSetup.addressId,
-      frequency: booking.recurringSetup.frequency,
-      preferred_day: booking.recurringSetup.preferredDay,
-      preferred_time: booking.recurringSetup.preferredTime,
-      service_data: withoutRecurringSetup(booking.service_data),
-      selected_addons: booking.selected_addons,
-      estimated_price: booking.estimated_price,
-      status: "Active",
-      next_booking_date: nextBookingDate,
-    })
+    .insert(recurringPayload)
     .select("id")
     .single();
 
   if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyPayload: Record<string, unknown> = { ...recurringPayload };
+    delete legacyPayload.preferred_days;
+    const legacyResult = await getSupabaseAdmin()
+      .from("recurring_bookings")
+      .insert(legacyPayload)
+      .select("id")
+      .single();
+
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+
+  if (error) {
     throw toSupabaseError(error);
+  }
+
+  if (!data) {
+    throw new Error("Recurring plan was created but no id was returned.");
   }
 
   const recurringPlanId = String(data.id);
@@ -447,7 +482,8 @@ function getRecurringSetup(value: unknown): BookingServiceData["recurringSetup"]
   if (
     frequency !== "Weekly" &&
     frequency !== "Bi-weekly" &&
-    frequency !== "Monthly"
+    frequency !== "Monthly" &&
+    frequency !== "Custom days"
   ) {
     return null;
   }
@@ -455,6 +491,7 @@ function getRecurringSetup(value: unknown): BookingServiceData["recurringSetup"]
   return {
     frequency,
     preferredDay: String(recurringSetup.preferredDay ?? ""),
+    preferredDays: normalisePreferredDays(recurringSetup.preferredDays),
     preferredTime: String(recurringSetup.preferredTime ?? ""),
     firstBookingDate: String(recurringSetup.firstBookingDate ?? ""),
     addressId:

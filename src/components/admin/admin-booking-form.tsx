@@ -7,6 +7,7 @@ import type { ServiceConfig } from "@/config/services";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { calculateBookingPricing, formatRand, getSelectedAddons } from "@/lib/pricing";
+import { recurringDays } from "@/lib/recurring-schedule";
 import type { Customer } from "@/lib/types";
 
 const inputClassName =
@@ -18,10 +19,31 @@ type AdminBookingFormProps = {
 };
 
 export function AdminBookingForm({ customers, services }: AdminBookingFormProps) {
+  const [customerMode, setCustomerMode] = useState<"existing" | "new">(
+    customers.length ? "existing" : "new"
+  );
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [frequency, setFrequency] = useState("Once-off");
+  const [customDays, setCustomDays] = useState<string[]>([]);
   const [serviceSlug, setServiceSlug] = useState(services[0]?.slug ?? "");
   const [serviceData, setServiceData] = useState<Record<string, string | number>>({});
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
   const selectedService = services.find((service) => service.slug === serviceSlug);
+  const filteredCustomers = useMemo(() => {
+    const term = customerSearch.trim().toLowerCase();
+
+    if (!term) {
+      return customers;
+    }
+
+    return customers.filter((customer) =>
+      [
+        customer.full_name,
+        customer.email,
+        customer.phone ?? "",
+      ].some((value) => value.toLowerCase().includes(term))
+    );
+  }, [customerSearch, customers]);
   const pricing = useMemo(
     () =>
       selectedService
@@ -45,19 +67,95 @@ export function AdminBookingForm({ customers, services }: AdminBookingFormProps)
     );
   }
 
+  function toggleCustomDay(day: string) {
+    setCustomDays((current) =>
+      current.includes(day)
+        ? current.filter((item) => item !== day)
+        : [...current, day]
+    );
+  }
+
   return (
     <form action={createAdminDraftBooking} className="grid gap-5">
+      <input type="hidden" name="customer_mode" value={customerMode} />
       <div className="grid gap-4 md:grid-cols-2">
-        <Field label="Customer">
-          <select name="customer_id" required className={inputClassName}>
-            <option value="">Choose customer</option>
-            {customers.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.full_name} ({customer.email})
-              </option>
-            ))}
-          </select>
-        </Field>
+        <div className="grid gap-3 md:col-span-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={customerMode === "existing" ? "default" : "outline"}
+              onClick={() => setCustomerMode("existing")}
+              disabled={!customers.length}
+            >
+              Existing customer
+            </Button>
+            <Button
+              type="button"
+              variant={customerMode === "new" ? "default" : "outline"}
+              onClick={() => setCustomerMode("new")}
+            >
+              Create New Customer
+            </Button>
+          </div>
+
+          {customerMode === "existing" ? (
+            <div className="grid gap-3">
+              <Field label="Search customers">
+                <input
+                  value={customerSearch}
+                  onChange={(event) => setCustomerSearch(event.target.value)}
+                  placeholder="Name, phone, or email"
+                  className={inputClassName}
+                />
+              </Field>
+              {filteredCustomers.length ? (
+                <Field label="Customer">
+                  <select name="customer_id" required className={inputClassName}>
+                    <option value="">Choose customer</option>
+                    {filteredCustomers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.full_name} ({customer.email || customer.phone || "No contact"})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed p-3 text-sm">
+                  <span className="text-muted-foreground">No matching customer found.</span>
+                  <Button type="button" onClick={() => setCustomerMode("new")}>
+                    Create New Customer
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <Card className="rounded-lg">
+              <CardContent className="grid gap-4 p-4 md:grid-cols-2">
+                <Field label="Full name">
+                  <input name="new_customer_full_name" required className={inputClassName} />
+                </Field>
+                <Field label="Phone number">
+                  <input name="new_customer_phone" required className={inputClassName} />
+                </Field>
+                <Field label="Email address">
+                  <input
+                    name="new_customer_email"
+                    type="email"
+                    required
+                    className={inputClassName}
+                  />
+                </Field>
+                <Field label="Customer notes">
+                  <textarea
+                    name="new_customer_notes"
+                    className={`${inputClassName} min-h-24 py-3`}
+                  />
+                </Field>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
         <Field label="Service">
           <select
             name="service_slug"
@@ -93,6 +191,20 @@ export function AdminBookingForm({ customers, services }: AdminBookingFormProps)
             className={inputClassName}
           />
         </Field>
+        <Field label="Frequency">
+          <select
+            name="frequency"
+            value={frequency}
+            onChange={(event) => setFrequency(event.target.value)}
+            className={inputClassName}
+          >
+            <option value="Once-off">Once-off</option>
+            <option value="Weekly">Weekly</option>
+            <option value="Bi-weekly">Bi-weekly</option>
+            <option value="Monthly">Monthly</option>
+            <option value="Custom days">Custom days</option>
+          </select>
+        </Field>
         <Field label="Initial status">
           <select name="status" defaultValue="Draft" className={inputClassName}>
             <option value="Draft">Draft</option>
@@ -101,6 +213,30 @@ export function AdminBookingForm({ customers, services }: AdminBookingFormProps)
           </select>
         </Field>
       </div>
+
+      {frequency === "Custom days" ? (
+        <div className="grid gap-2">
+          <p className="text-sm font-medium">Custom days</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {recurringDays.map((day) => (
+              <label
+                key={day}
+                className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+              >
+                <input
+                  name="custom_days"
+                  value={day}
+                  type="checkbox"
+                  checked={customDays.includes(day)}
+                  onChange={() => toggleCustomDay(day)}
+                  className="size-4"
+                />
+                {day}
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {selectedService ? (
         <Card className="rounded-lg">

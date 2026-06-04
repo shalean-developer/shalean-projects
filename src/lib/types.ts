@@ -100,7 +100,7 @@ export const requestStatuses: RequestStatus[] = [
 
 export type Customer = {
   id: string;
-  user_id: string | null;
+  user_id: string;
   full_name: string;
   email: string;
   phone: string | null;
