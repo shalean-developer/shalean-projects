@@ -10,6 +10,15 @@ import {
 import { getCleanerByUserIdOrEmail } from "@/lib/supabase/queries";
 import type { CleanerWithAvailability, Customer } from "@/lib/types";
 
+export type AuthRole = "customer" | "cleaner" | "admin";
+
+export class RoleConflictError extends Error {
+  constructor(message = "This account is linked to more than one role. Contact Shalean support to fix the account before continuing.") {
+    super(message);
+    this.name = "RoleConflictError";
+  }
+}
+
 export async function getCurrentUser() {
   if (!hasSupabaseAuthConfig()) {
     return null;
@@ -29,7 +38,7 @@ export async function requireUser(redirectTo = "/account") {
   const user = await getCurrentUser();
 
   if (!user) {
-    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+    redirect(`${getLoginPathForRoute(redirectTo)}?redirect=${encodeURIComponent(redirectTo)}`);
   }
 
   return user;
@@ -37,6 +46,20 @@ export async function requireUser(redirectTo = "/account") {
 
 export async function requireCustomer(redirectTo = "/account") {
   const user = await requireUser(redirectTo);
+  const role = await getCurrentUserRole(user.id);
+
+  if (role === "admin") {
+    redirect("/admin");
+  }
+
+  if (role === "cleaner") {
+    redirect("/cleaner");
+  }
+
+  if (role !== "customer") {
+    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+  }
+
   const customer = await getCustomerForAccountUser(user);
 
   return { user, customer };
@@ -49,11 +72,7 @@ export async function getOptionalCustomer() {
     return null;
   }
 
-  if (await shouldUseAdminDashboard(user)) {
-    return null;
-  }
-
-  if (await shouldUseCleanerDashboard(user)) {
+  if ((await getCurrentUserRole(user.id)) !== "customer") {
     return null;
   }
 
@@ -71,22 +90,27 @@ export async function getOptionalCustomer() {
 
 export async function requireAdmin(redirectTo = "/admin") {
   const user = await requireUser(redirectTo);
+  const role = await getCurrentUserRole(user.id);
 
-  if (!isAdminUser(user)) {
-    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+  if (role !== "admin") {
+    redirect(`/admin-login?redirect=${encodeURIComponent(redirectTo)}`);
   }
-
-  await ensureAdminForUser(user);
 
   return user;
 }
 
 export async function requireCleaner(redirectTo = "/cleaner") {
   const user = await requireUser(redirectTo);
+  const role = await getCurrentUserRole(user.id);
+
+  if (role !== "cleaner") {
+    redirect(`/cleaner-login?redirect=${encodeURIComponent(redirectTo)}`);
+  }
+
   const cleaner = await getCleanerByUser(user);
 
   if (!cleaner || !cleaner.active) {
-    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+    redirect(`/cleaner-login?redirect=${encodeURIComponent(redirectTo)}`);
   }
 
   return { user, cleaner };
@@ -99,6 +123,10 @@ export async function getOptionalCleaner() {
     return null;
   }
 
+  if ((await getCurrentUserRole(user.id)) !== "cleaner") {
+    return null;
+  }
+
   const cleaner = await getCleanerByUser(user);
 
   if (!cleaner) {
@@ -108,34 +136,34 @@ export async function getOptionalCleaner() {
   return { user, cleaner };
 }
 
-export function isAdminUser(user: User) {
-  const role = getUserDeclaredRole(user);
-  const configuredAdminEmails = (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean);
+export async function getCurrentUserRole(userId: string): Promise<AuthRole | null> {
+  const [customerCount, cleanerCount, adminCount] = await Promise.all([
+    countCustomerRoles(userId),
+    countCleanerRoles(userId),
+    countAdminRoles(userId),
+  ]);
+  const roleCounts: Array<[AuthRole, number]> = [
+    ["customer", customerCount],
+    ["cleaner", cleanerCount],
+    ["admin", adminCount],
+  ];
+  const matchedRoles = roleCounts.filter(([, count]) => count > 0);
+  const totalMatches = roleCounts.reduce((total, [, count]) => total + count, 0);
 
-  return (
-    role === "admin" ||
-    Boolean(user.email && configuredAdminEmails.includes(user.email.toLowerCase()))
-  );
+  if (matchedRoles.length > 1 || totalMatches > 1) {
+    throw new RoleConflictError();
+  }
+
+  return matchedRoles[0]?.[0] ?? null;
 }
 
 async function getCleanerByUser(
   user: User
 ): Promise<CleanerWithAvailability | null> {
-  return getCleanerByUserIdOrEmail(user.id, user.email);
+  return getCleanerByUserIdOrEmail(user.id, undefined);
 }
 
 async function getCustomerForAccountUser(user: User): Promise<Customer> {
-  if (await shouldUseAdminDashboard(user)) {
-    redirect("/admin");
-  }
-
-  if (await shouldUseCleanerDashboard(user)) {
-    redirect("/cleaner");
-  }
-
   const customer = await findCustomerForUser(user);
 
   if (!customer) {
@@ -143,34 +171,6 @@ async function getCustomerForAccountUser(user: User): Promise<Customer> {
   }
 
   return customer;
-}
-
-async function shouldUseAdminDashboard(user: User) {
-  if (isAdminUser(user)) {
-    return true;
-  }
-
-  const { data, error } = await getSupabaseAdmin()
-    .from("admins")
-    .select("id, status")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (error) {
-    const normalizedError = toSupabaseError(error);
-
-    if (isSupabaseSchemaMissingError(normalizedError)) {
-      return false;
-    }
-
-    throw normalizedError;
-  }
-
-  return Boolean(data && data.status !== "Inactive");
-}
-
-async function shouldUseCleanerDashboard(user: User) {
-  return Boolean(await getCleanerByUser(user));
 }
 
 async function findCustomerForUser(user: User): Promise<Customer | null> {
@@ -207,11 +207,13 @@ async function findCustomerForUser(user: User): Promise<Customer | null> {
 }
 
 export async function ensureCustomerForUser(user: User): Promise<Customer> {
-  if (await shouldUseAdminDashboard(user)) {
+  const role = await getCurrentUserRole(user.id);
+
+  if (role === "admin") {
     redirect("/admin");
   }
 
-  if (await shouldUseCleanerDashboard(user)) {
+  if (role === "cleaner") {
     redirect("/cleaner");
   }
 
@@ -297,44 +299,6 @@ export async function ensureCustomerForUser(user: User): Promise<Customer> {
   return mapCustomer(data);
 }
 
-async function ensureAdminForUser(user: User) {
-  const supabase = getSupabaseAdmin();
-  const { error } = await supabase.from("admins").upsert(
-    {
-      user_id: user.id,
-      full_name:
-        typeof user.user_metadata?.full_name === "string"
-          ? user.user_metadata.full_name
-          : user.email?.split("@")[0] ?? "Admin",
-      email: user.email ?? "",
-      phone:
-        typeof user.user_metadata?.phone === "string"
-          ? user.user_metadata.phone
-          : null,
-      permission_level:
-        typeof user.app_metadata?.permission_level === "string"
-          ? user.app_metadata.permission_level
-          : "Admin",
-      status: "Active",
-    },
-    { onConflict: "user_id" }
-  );
-
-  if (error) {
-    const normalizedError = toSupabaseError(error);
-
-    if (isSupabaseSchemaMissingError(normalizedError)) {
-      return;
-    }
-
-    throw normalizedError;
-  }
-}
-
-function getUserDeclaredRole(user: User) {
-  return String(user.app_metadata?.role ?? user.user_metadata?.role ?? "");
-}
-
 function mapCustomer(customer: Record<string, unknown>): Customer {
   return {
     id: String(customer.id ?? ""),
@@ -344,4 +308,99 @@ function mapCustomer(customer: Record<string, unknown>): Customer {
     phone: typeof customer.phone === "string" ? customer.phone : null,
     created_at: String(customer.created_at ?? ""),
   };
+}
+
+async function countCustomerRoles(userId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("customers")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("account_role", "customer")
+    .limit(2);
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (isSupabaseSchemaMissingError(normalizedError)) {
+      const legacy = await getSupabaseAdmin()
+        .from("customers")
+        .select("id")
+        .eq("user_id", userId)
+        .limit(2);
+
+      if (legacy.error) {
+        throw toSupabaseError(legacy.error);
+      }
+
+      return legacy.data?.length ?? 0;
+    }
+
+    throw normalizedError;
+  }
+
+  return data?.length ?? 0;
+}
+
+async function countCleanerRoles(userId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("cleaners")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("account_role", "cleaner")
+    .limit(2);
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (isSupabaseSchemaMissingError(normalizedError)) {
+      const legacy = await getSupabaseAdmin()
+        .from("cleaners")
+        .select("id")
+        .eq("user_id", userId)
+        .limit(2);
+
+      if (legacy.error) {
+        throw toSupabaseError(legacy.error);
+      }
+
+      return legacy.data?.length ?? 0;
+    }
+
+    throw normalizedError;
+  }
+
+  return data?.length ?? 0;
+}
+
+async function countAdminRoles(userId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("admins")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "Active")
+    .limit(2);
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (isSupabaseSchemaMissingError(normalizedError)) {
+      return 0;
+    }
+
+    throw normalizedError;
+  }
+
+  return data?.length ?? 0;
+}
+
+function getLoginPathForRoute(redirectTo: string) {
+  if (redirectTo.startsWith("/admin")) {
+    return "/admin-login";
+  }
+
+  if (redirectTo.startsWith("/cleaner")) {
+    return "/cleaner-login";
+  }
+
+  return "/login";
 }

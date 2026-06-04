@@ -8,6 +8,9 @@ import {
   adminRequestDecisionSchema,
   authSchema,
   bookingRequestSchema,
+  cleanerAuthSchema,
+  passwordResetRequestSchema,
+  passwordUpdateSchema,
   profileSchema,
   signupSchema,
   type AddressValues,
@@ -20,7 +23,9 @@ import {
 } from "@/lib/automation";
 import {
   ensureCustomerForUser,
+  getCurrentUserRole,
   getOptionalCustomer,
+  RoleConflictError,
   requireAdmin,
   requireCleaner,
   requireCustomer,
@@ -38,7 +43,6 @@ import {
 } from "@/lib/invoices";
 import {
   cleanerAuthEmailFromPhone,
-  isPhoneLoginIdentifier,
   normalizeSouthAfricanPhone,
 } from "@/lib/phone-auth";
 import { calculatePaymentAmount } from "@/lib/paystack";
@@ -468,6 +472,8 @@ export async function signUpCustomer(values: unknown) {
     throw new Error("Enter a valid South African phone number.");
   }
 
+  await assertCustomerSignupIdentityAllowed(parsed.data.email, phone);
+
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
@@ -498,16 +504,150 @@ export async function loginCustomer(values: unknown) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const email = isPhoneLoginIdentifier(parsed.data.email)
-    ? cleanerAuthEmailFromPhone(parsed.data.email)
-    : parsed.data.email.trim();
+  const email = parsed.data.email.trim();
 
-  if (!email) {
-    throw new Error("Enter a valid phone number or email address.");
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password: parsed.data.password,
+  });
+
+  if (error) {
+    throw new Error("Incorrect email or password.");
   }
 
-  const { error } = await supabase.auth.signInWithPassword({
+  const role = await resolveLoginRole(data.user.id);
+
+  if (role !== "customer") {
+    await supabase.auth.signOut();
+    throw new Error("Customer account not found");
+  }
+
+  return { ok: true };
+}
+
+export async function loginCleaner(values: unknown) {
+  const parsed = cleanerAuthSchema.safeParse(values);
+
+  if (!parsed.success) {
+    throw new Error("Enter your phone number and password.");
+  }
+
+  const email = cleanerAuthEmailFromPhone(parsed.data.phone);
+
+  if (!email) {
+    throw new Error("Enter a valid South African phone number.");
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
+    password: parsed.data.password,
+  });
+
+  if (error) {
+    throw new Error("Incorrect phone number or password");
+  }
+
+  const role = await resolveLoginRole(data.user.id);
+
+  if (role !== "cleaner") {
+    await supabase.auth.signOut();
+    throw new Error("Cleaner account not found");
+  }
+
+  return { ok: true };
+}
+
+export async function loginAdmin(values: unknown) {
+  const parsed = authSchema.safeParse(values);
+
+  if (!parsed.success) {
+    throw new Error("Enter your email and password.");
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: parsed.data.email.trim(),
+    password: parsed.data.password,
+  });
+
+  if (error) {
+    throw new Error("Admin access denied");
+  }
+
+  const role = await resolveLoginRole(data.user.id);
+
+  if (role !== "admin") {
+    await supabase.auth.signOut();
+    throw new Error("Admin access denied");
+  }
+
+  return { ok: true };
+}
+
+export async function requestCustomerPasswordReset(values: unknown) {
+  const parsed = passwordResetRequestSchema.safeParse(values);
+
+  if (!parsed.success) {
+    throw new Error("Enter a valid email address.");
+  }
+
+  const email = parsed.data.email.trim().toLowerCase();
+  const { data, error } = await getSupabaseAdmin()
+    .from("customers")
+    .select("id")
+    .ilike("email", email)
+    .limit(1);
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+  }
+
+  if (!data?.length) {
+    return { ok: true };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+    email,
+    {
+      redirectTo: `${getSiteUrl()}/reset-password`,
+    }
+  );
+
+  if (resetError) {
+    throw new Error(resetError.message);
+  }
+
+  return { ok: true };
+}
+
+export async function updateCustomerPassword(values: unknown) {
+  const parsed = passwordUpdateSchema.safeParse(values);
+
+  if (!parsed.success) {
+    throw new Error("Enter and confirm your new password.");
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+
+  if (userError || !userData.user) {
+    throw new Error("Open the reset link from your email before updating your password.");
+  }
+
+  const role = await resolveLoginRole(userData.user.id);
+
+  if (role !== "customer") {
+    await supabase.auth.signOut();
+    throw new Error("For password reset, please contact support.");
+  }
+
+  const { error } = await supabase.auth.updateUser({
     password: parsed.data.password,
   });
 
@@ -522,6 +662,66 @@ export async function logoutCustomer() {
   const supabase = await createSupabaseServerClient();
   await supabase.auth.signOut();
   redirect("/login");
+}
+
+export async function logoutCleaner() {
+  const supabase = await createSupabaseServerClient();
+  await supabase.auth.signOut();
+  redirect("/cleaner-login");
+}
+
+export async function logoutAdmin() {
+  const supabase = await createSupabaseServerClient();
+  await supabase.auth.signOut();
+  redirect("/admin-login");
+}
+
+async function resolveLoginRole(userId: string) {
+  try {
+    return await getCurrentUserRole(userId);
+  } catch (error) {
+    if (error instanceof RoleConflictError) {
+      throw new Error(error.message);
+    }
+
+    throw error;
+  }
+}
+
+async function assertCustomerSignupIdentityAllowed(email: string, phone: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const [cleanerResult, adminResult] = await Promise.all([
+    getSupabaseAdmin()
+      .from("cleaners")
+      .select("id")
+      .or(`phone.eq.${phone},email.ilike.${normalizedEmail}`)
+      .limit(1),
+    getSupabaseAdmin()
+      .from("admins")
+      .select("id")
+      .ilike("email", normalizedEmail)
+      .limit(1),
+  ]);
+
+  if (cleanerResult.error) {
+    const normalizedError = toSupabaseError(cleanerResult.error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+  }
+
+  if (adminResult.error) {
+    const normalizedError = toSupabaseError(adminResult.error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+  }
+
+  if (cleanerResult.data?.length || adminResult.data?.length) {
+    throw new Error("Customer account not found");
+  }
 }
 
 export async function updateCustomerProfile(values: ProfileValues) {
@@ -2805,6 +3005,7 @@ async function upsertCleanerAuthUser({
       {
         email,
         password,
+        app_metadata: { role: "cleaner" },
         user_metadata: { full_name: fullName, phone, role: "cleaner" },
       }
     );
@@ -2820,6 +3021,7 @@ async function upsertCleanerAuthUser({
     email,
     password,
     email_confirm: true,
+    app_metadata: { role: "cleaner" },
     user_metadata: { full_name: fullName, phone, role: "cleaner" },
   });
 
@@ -3125,4 +3327,11 @@ function createBookingReference() {
   const timeSegment = Date.now().toString(36).toUpperCase();
 
   return `SHL-${timeSegment}-${randomSegment}`;
+}
+
+function getSiteUrl() {
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+    "http://localhost:3000"
+  );
 }

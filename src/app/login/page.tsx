@@ -9,12 +9,12 @@ import { hasSupabaseAuthConfig } from "@/lib/supabase/server";
 export default function LoginPage() {
   return (
     <AuthShell
-      title="Log in"
-      subtitle="Access your bookings, saved addresses, and account details."
+      title="Login"
+      subtitle="Welcome back! Please login to your account."
     >
       {hasSupabaseAuthConfig() ? (
         <Suspense fallback={null}>
-          <AuthForm mode="login" />
+          <AuthForm mode="customer-login" />
         </Suspense>
       ) : (
         <AuthConfigNotice />
@@ -36,7 +36,6 @@ function AuthShell({
     <main className="grid min-h-screen bg-background px-5 py-8">
       <section className="mx-auto grid w-full max-w-md content-center gap-5">
         <div className="text-center">
-          <p className="text-sm font-medium text-primary">Shalean account</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-normal">{title}</h1>
           <p className="mt-3 text-muted-foreground">{subtitle}</p>
         </div>
@@ -59,7 +58,7 @@ function AuthConfigNotice() {
       </CardHeader>
       <p>
         Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable
-        customer login.
+        login.
       </p>
     </div>
   );

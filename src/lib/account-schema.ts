@@ -3,7 +3,31 @@ import { z } from "zod";
 import { isValidSouthAfricanPhone } from "@/lib/phone-auth";
 
 export const authSchema = z.object({
-  email: z.string().trim().min(2, "Enter your email or cleaner phone number."),
+  email: z.string().trim().min(2, "Enter your email address."),
+  password: z.string().min(6, "Password must be at least 6 characters."),
+});
+
+export const passwordResetRequestSchema = z.object({
+  email: z.email("Enter a valid email address."),
+});
+
+export const passwordUpdateSchema = z
+  .object({
+    password: z.string().min(6, "Password must be at least 6 characters."),
+    confirmPassword: z
+      .string()
+      .min(6, "Password must be at least 6 characters."),
+  })
+  .refine((values) => values.password === values.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords must match.",
+  });
+
+export const cleanerAuthSchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .refine(isValidSouthAfricanPhone, "Enter a valid South African phone number."),
   password: z.string().min(6, "Password must be at least 6 characters."),
 });
 
@@ -72,6 +96,11 @@ export const adminRequestDecisionSchema = z.object({
 });
 
 export type AuthValues = z.infer<typeof authSchema>;
+export type CleanerAuthValues = z.infer<typeof cleanerAuthSchema>;
+export type PasswordResetRequestValues = z.infer<
+  typeof passwordResetRequestSchema
+>;
+export type PasswordUpdateValues = z.infer<typeof passwordUpdateSchema>;
 export type SignupValues = z.infer<typeof signupSchema>;
 export type ProfileValues = z.infer<typeof profileSchema>;
 export type AddressValues = z.infer<typeof addressSchema>;

@@ -18,7 +18,8 @@ import {
   Workflow,
 } from "lucide-react";
 
-import { buttonVariants } from "@/components/ui/button";
+import { logoutAdmin } from "@/app/actions";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const adminNavItems = [
@@ -58,6 +59,11 @@ export function AdminNav() {
           {item.label}
         </Link>
       ))}
+      <form action={logoutAdmin} className="shrink-0">
+        <Button type="submit" variant="ghost" size="sm" className="h-8">
+          Log out
+        </Button>
+      </form>
     </nav>
   );
 }

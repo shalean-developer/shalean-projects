@@ -423,14 +423,16 @@ export async function getBookingRequestsByBookingId(
 export async function getCustomerRecurringBookings(
   customerId: string
 ): Promise<RecurringBooking[]> {
-  let { data, error } = await getSupabaseAdmin()
+  const result = await getSupabaseAdmin()
     .from("recurring_bookings")
     .select(recurringBookingSelect)
     .eq("customer_id", customerId)
     .order("created_at", { ascending: false });
+  let data = result.data;
+  const queryError = result.error;
 
-  if (error) {
-    const normalizedError = toSupabaseError(error);
+  if (queryError) {
+    const normalizedError = toSupabaseError(queryError);
 
     if (!isSupabaseSchemaMissingError(normalizedError)) {
       throw normalizedError;
@@ -489,13 +491,15 @@ export async function getCustomerRecurringBookingById(
 }
 
 export async function getRecurringBookings(): Promise<RecurringBooking[]> {
-  let { data, error } = await getSupabaseAdmin()
+  const result = await getSupabaseAdmin()
     .from("recurring_bookings")
     .select(recurringBookingSelect)
     .order("created_at", { ascending: false });
+  let data = result.data;
+  const queryError = result.error;
 
-  if (error) {
-    const normalizedError = toSupabaseError(error);
+  if (queryError) {
+    const normalizedError = toSupabaseError(queryError);
 
     if (!isSupabaseSchemaMissingError(normalizedError)) {
       throw normalizedError;
@@ -605,14 +609,16 @@ export async function getCustomerReviews(customerId: string): Promise<Review[]> 
 }
 
 export async function getCustomers(): Promise<Customer[]> {
-  let { data, error } = await getSupabaseAdmin()
+  const result = await getSupabaseAdmin()
     .from("customers")
     .select("id, user_id, full_name, email, phone, created_at")
     .eq("account_role", "customer")
     .order("created_at", { ascending: false });
+  let data = result.data;
+  const queryError = result.error;
 
-  if (error) {
-    const normalizedError = toSupabaseError(error);
+  if (queryError) {
+    const normalizedError = toSupabaseError(queryError);
 
     if (!isSupabaseSchemaMissingError(normalizedError)) {
       throw normalizedError;
@@ -740,14 +746,16 @@ export async function getRecurringPlanChangeRequests(
 }
 
 export async function getCleaners(): Promise<Cleaner[]> {
-  let { data, error } = await getSupabaseAdmin()
+  const result = await getSupabaseAdmin()
     .from("cleaners")
     .select(cleanerSelect)
     .eq("account_role", "cleaner")
     .order("full_name", { ascending: true });
+  let data = result.data;
+  const queryError = result.error;
 
-  if (error) {
-    const normalizedError = toSupabaseError(error);
+  if (queryError) {
+    const normalizedError = toSupabaseError(queryError);
 
     if (!isSupabaseSchemaMissingError(normalizedError)) {
       throw normalizedError;

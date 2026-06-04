@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Briefcase, CalendarDays, Home, User, Wallet } from "lucide-react";
 
-import { logoutCustomer } from "@/app/actions";
+import { logoutCleaner } from "@/app/actions";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { requireCleaner } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -48,7 +48,7 @@ export default async function CleanerLayout({
               </Link>
             ))}
           </nav>
-          <form action={logoutCustomer}>
+          <form action={logoutCleaner}>
             <Button type="submit" variant="ghost" className="w-full justify-start">
               Log out
             </Button>
