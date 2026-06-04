@@ -100,11 +100,23 @@ export const requestStatuses: RequestStatus[] = [
 
 export type Customer = {
   id: string;
-  user_id: string;
+  user_id: string | null;
   full_name: string;
   email: string;
   phone: string | null;
   created_at: string;
+};
+
+export type AdminUser = {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  permission_level: "Owner" | "Admin" | "Operations" | "Support";
+  status: "Active" | "Inactive";
+  created_at: string;
+  updated_at: string;
 };
 
 export type CustomerAddress = {
@@ -263,8 +275,9 @@ export type BookingServiceData = {
   preferredCleanerName?: string;
   numberOfCleaners?: number;
   recurringSetup?: {
-    frequency: "Weekly" | "Bi-weekly" | "Monthly";
+    frequency: RecurringFrequency;
     preferredDay: string;
+    preferredDays?: string[];
     preferredTime: string;
     firstBookingDate: string;
     addressId: string | null;
@@ -341,12 +354,17 @@ export type BookingRequest = {
   customer?: Customer | null;
 };
 
-export type RecurringFrequency = "Weekly" | "Bi-weekly" | "Monthly";
+export type RecurringFrequency =
+  | "Weekly"
+  | "Bi-weekly"
+  | "Monthly"
+  | "Custom days";
 
 export const recurringFrequencies: RecurringFrequency[] = [
   "Weekly",
   "Bi-weekly",
   "Monthly",
+  "Custom days",
 ];
 
 export type RecurringBookingStatus = "Active" | "Paused" | "Cancelled";
@@ -402,6 +420,7 @@ export type RecurringBooking = {
   address: CustomerAddress | null;
   frequency: RecurringFrequency;
   preferred_day: string;
+  preferred_days: string[];
   preferred_time: string;
   service_data: BookingServiceData;
   selected_addons: BookingAddonData[];

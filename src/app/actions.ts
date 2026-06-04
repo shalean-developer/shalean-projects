@@ -80,6 +80,8 @@ import {
 import {
   formatPreferredDays,
   getFirstRecurringDate,
+  getNextRecurringDate,
+  normalisePreferredDays,
   normalizeRecurringFrequency,
   weekdayNameFromDate,
 } from "@/lib/recurring-schedule";
@@ -101,8 +103,9 @@ import {
 } from "@/lib/types";
 
 type RecurringPaymentSetup = {
-  frequency: "Weekly" | "Bi-weekly" | "Monthly";
+  frequency: "Weekly" | "Bi-weekly" | "Monthly" | "Custom days";
   preferredDay: string;
+  preferredDays?: string[];
   preferredTime: string;
   firstBookingDate: string;
   addressId: string | null;
@@ -873,7 +876,6 @@ export async function updateBookingStatus(formData: FormData) {
 
 export async function createAdminDraftBooking(formData: FormData) {
   await requireAdmin("/admin/bookings/new");
-  const customerId = getRequiredString(formData, "customer_id");
   const serviceSlug = getRequiredString(formData, "service_slug");
   const bookingDate = getRequiredString(formData, "booking_date");
   const bookingTime = getRequiredString(formData, "booking_time");
@@ -886,21 +888,41 @@ export async function createAdminDraftBooking(formData: FormData) {
     throw new Error("Admin-created bookings must start as Draft, Pending Invoice, or Confirmed.");
   }
 
-  const [service, customerResult] = await Promise.all([
-    getServiceConfigBySlug(serviceSlug, { includeInactive: true }),
-    getSupabaseAdmin()
-      .from("customers")
-      .select("id, full_name, email, phone")
-      .eq("id", customerId)
-      .single(),
-  ]);
+  const service = await getServiceConfigBySlug(serviceSlug, {
+    includeInactive: true,
+  });
 
   if (!service) {
     throw new Error("Selected service is no longer available.");
   }
 
+  const customer = await resolveAdminBookingCustomer(formData, {
+    address,
+    suburb,
+    city,
+  });
+  const [recurringFrequency, recurringPreferredDays] =
+    getAdminRecurringSelection(formData, bookingDate);
+
+  const [customerResult] = await Promise.all([
+    getSupabaseAdmin()
+      .from("customers")
+      .select("id, full_name, email, phone")
+      .eq("id", customer.id)
+      .eq("account_role", "customer")
+      .single(),
+  ]);
+
   if (customerResult.error) {
     throw toSupabaseError(customerResult.error);
+  }
+
+  const [serviceForValidation] = await Promise.all([
+    getServiceConfigBySlug(serviceSlug, { includeInactive: true }),
+  ]);
+
+  if (!serviceForValidation) {
+    throw new Error("Selected service is no longer available.");
   }
 
   const serviceData = buildAdminBookingServiceData(service, formData);
@@ -917,6 +939,20 @@ export async function createAdminDraftBooking(formData: FormData) {
     selectedAddonIds,
     serviceData
   );
+  const preferredDayLabel = recurringFrequency
+    ? formatPreferredDays(recurringPreferredDays)
+    : "";
+  const firstBookingDate = recurringFrequency
+    ? getFirstRecurringDate(bookingDate, recurringFrequency, preferredDayLabel)
+    : bookingDate;
+  const recurringAddressId = recurringFrequency
+    ? customer.addressId ??
+      (await createAdminCustomerAddress(customer.id, {
+        address,
+        suburb,
+        city,
+      }))
+    : null;
   const bookingReference = createBookingReference();
   const { data, error } = await getSupabaseAdmin()
     .from("bookings")
@@ -925,15 +961,15 @@ export async function createAdminDraftBooking(formData: FormData) {
       customer_name: String(customerResult.data.full_name ?? ""),
       customer_email: String(customerResult.data.email ?? ""),
       customer_phone: String(customerResult.data.phone ?? ""),
-      customer_id: customerId,
+      customer_id: customer.id,
       service_id: service.id,
       address,
       suburb,
       city,
-      booking_date: bookingDate,
+      booking_date: firstBookingDate,
       booking_time: bookingTime,
-      scheduled_start_time: toScheduledTimestamp(bookingDate, bookingTime),
-      scheduled_end_time: toScheduledTimestamp(bookingDate, bookingTime, 3),
+      scheduled_start_time: toScheduledTimestamp(firstBookingDate, bookingTime),
+      scheduled_end_time: toScheduledTimestamp(firstBookingDate, bookingTime, 3),
       notes: getOptionalString(formData, "notes"),
       service_data: {
         serviceSlug: service.slug,
@@ -941,6 +977,18 @@ export async function createAdminDraftBooking(formData: FormData) {
         pricingBreakdown,
         cleanerSelectionType: "auto",
         numberOfCleaners: clampCleanerCount(getNumber(formData, "number_of_cleaners") || 1),
+        ...(recurringFrequency
+          ? {
+              recurringSetup: {
+                frequency: recurringFrequency,
+                preferredDay: preferredDayLabel,
+                preferredDays: recurringPreferredDays,
+                preferredTime: bookingTime,
+                firstBookingDate,
+                addressId: recurringAddressId,
+              },
+            }
+          : {}),
         questions: service.questions.map((question) => ({
           id: question.id,
           label: question.label,
@@ -965,6 +1013,60 @@ export async function createAdminDraftBooking(formData: FormData) {
 
   if (error) {
     throw toSupabaseError(error);
+  }
+
+  if (recurringFrequency) {
+    const nextBookingDate = getNextRecurringDate(
+      firstBookingDate,
+      recurringFrequency,
+      preferredDayLabel
+    );
+    const { data: recurringPlan, error: recurringError } = await getSupabaseAdmin()
+      .from("recurring_bookings")
+      .insert({
+        customer_id: customer.id,
+        service_id: service.id,
+        address_id: recurringAddressId,
+        frequency: recurringFrequency,
+        preferred_day: preferredDayLabel,
+        preferred_days: recurringPreferredDays,
+        preferred_time: bookingTime,
+        service_data: {
+          serviceSlug: service.slug,
+          serviceName: service.name,
+          pricingBreakdown,
+          cleanerSelectionType: "auto",
+          numberOfCleaners: clampCleanerCount(
+            getNumber(formData, "number_of_cleaners") || 1
+          ),
+          questions: service.questions.map((question) => ({
+            id: question.id,
+            label: question.label,
+            value: serviceData[question.id] ?? "",
+          })),
+        },
+        selected_addons: selectedAddons,
+        estimated_price: estimatedTotal,
+        status: "Active",
+        next_booking_date: nextBookingDate,
+      })
+      .select("id")
+      .single();
+
+    if (recurringError) {
+      throw toSupabaseError(recurringError);
+    }
+
+    const { error: updateError } = await getSupabaseAdmin()
+      .from("bookings")
+      .update({ recurring_booking_id: String(recurringPlan.id) })
+      .eq("id", String(data.id));
+
+    if (updateError) {
+      throw toSupabaseError(updateError);
+    }
+
+    revalidatePath("/admin/recurring");
   }
 
   revalidatePath("/admin/bookings");

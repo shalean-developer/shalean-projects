@@ -1,5 +1,8 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { toSupabaseError } from "@/lib/supabase/errors";
+import {
+  isSupabaseSchemaMissingError,
+  toSupabaseError,
+} from "@/lib/supabase/errors";
 import { workingDays } from "@/lib/types";
 import type {
   ServiceConfig,
@@ -16,6 +19,7 @@ import type {
   BookingStatus,
   BookingWithService,
   Cleaner,
+  AdminUser,
   CleanerDateAvailability,
   CleanerEarning,
   CleanerLeaveRequest,
@@ -63,6 +67,9 @@ const bookingSelect =
   `id, booking_reference, recurring_booking_id, customer_id, customer_name, customer_email, customer_phone, service_id, address, suburb, city, booking_date, booking_time, scheduled_start_time, scheduled_end_time, completed_at, cancelled_at, cancellation_reason, notes, service_data, selected_addons, estimated_price, status, payment_status, payment_type, total_amount, number_of_cleaners, amount_paid, balance_due, confirmed_at, assigned_cleaner_id, job_status, can_reschedule, can_cancel, created_at, services(name), assigned_cleaner:cleaners(${cleanerSelect}), booking_assignments(id, booking_id, cleaner_id, assignment_status, is_team_leader, assigned_at, created_at, cleaners(${cleanerSelect})), payments(id, booking_id, payment_reference, paystack_reference, payment_type, amount_due, amount_paid, currency, payment_status, payment_method, paid_at, created_at)`;
 
 const recurringBookingSelect =
+  "id, customer_id, service_id, address_id, frequency, preferred_day, preferred_days, preferred_time, service_data, selected_addons, estimated_price, status, next_booking_date, created_at, services(name), customer_addresses(id, customer_id, label, address, suburb, city, access_instructions, gate_code, parking_instructions, is_default, created_at), customers(id, user_id, full_name, email, phone, created_at)";
+
+const recurringBookingSelectLegacy =
   "id, customer_id, service_id, address_id, frequency, preferred_day, preferred_time, service_data, selected_addons, estimated_price, status, next_booking_date, created_at, services(name), customer_addresses(id, customer_id, label, address, suburb, city, access_instructions, gate_code, parking_instructions, is_default, created_at), customers(id, user_id, full_name, email, phone, created_at)";
 
 const invoiceSelect =
@@ -416,14 +423,30 @@ export async function getBookingRequestsByBookingId(
 export async function getCustomerRecurringBookings(
   customerId: string
 ): Promise<RecurringBooking[]> {
-  const { data, error } = await getSupabaseAdmin()
+  let { data, error } = await getSupabaseAdmin()
     .from("recurring_bookings")
     .select(recurringBookingSelect)
     .eq("customer_id", customerId)
     .order("created_at", { ascending: false });
 
   if (error) {
-    throw toSupabaseError(error);
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyResult = await getSupabaseAdmin()
+      .from("recurring_bookings")
+      .select(recurringBookingSelectLegacy)
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false });
+
+    if (legacyResult.error) {
+      throw toSupabaseError(legacyResult.error);
+    }
+
+    data = legacyResult.data;
   }
 
   return (data ?? []).map(mapRecurringBooking);
@@ -433,12 +456,30 @@ export async function getCustomerRecurringBookingById(
   customerId: string,
   recurringBookingId: string
 ): Promise<RecurringBooking | null> {
-  const { data, error } = await getSupabaseAdmin()
+  let { data, error } = await getSupabaseAdmin()
     .from("recurring_bookings")
     .select(recurringBookingSelect)
     .eq("id", recurringBookingId)
     .eq("customer_id", customerId)
     .maybeSingle();
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyResult = await getSupabaseAdmin()
+      .from("recurring_bookings")
+      .select(recurringBookingSelectLegacy)
+      .eq("id", recurringBookingId)
+      .eq("customer_id", customerId)
+      .maybeSingle();
+
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
 
   if (error) {
     throw toSupabaseError(error);
@@ -549,16 +590,105 @@ export async function getCustomerReviews(customerId: string): Promise<Review[]> 
 }
 
 export async function getCustomers(): Promise<Customer[]> {
-  const { data, error } = await getSupabaseAdmin()
+  let { data, error } = await getSupabaseAdmin()
     .from("customers")
     .select("id, user_id, full_name, email, phone, created_at")
+    .eq("account_role", "customer")
     .order("created_at", { ascending: false });
 
   if (error) {
-    throw toSupabaseError(error);
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyResult = await getSupabaseAdmin()
+      .from("customers")
+      .select("id, user_id, full_name, email, phone, created_at")
+      .order("created_at", { ascending: false });
+
+    if (legacyResult.error) {
+      throw toSupabaseError(legacyResult.error);
+    }
+
+    data = legacyResult.data;
   }
 
-  return (data ?? []).map(mapCustomer);
+  const [cleaners, admins] = await Promise.all([
+    getSupabaseAdmin().from("cleaners").select("user_id, email, phone"),
+    getSupabaseAdmin().from("admins").select("user_id, email"),
+  ]);
+
+  if (cleaners.error) {
+    const normalizedError = toSupabaseError(cleaners.error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+  }
+
+  const adminData = admins.error
+    ? isSupabaseSchemaMissingError(toSupabaseError(admins.error))
+      ? []
+      : (() => {
+          throw toSupabaseError(admins.error);
+        })()
+    : admins.data ?? [];
+  const cleanerData = cleaners.error ? [] : cleaners.data ?? [];
+
+  const blockedUserIds = new Set(
+    [
+      ...cleanerData.map((cleaner) => cleaner.user_id),
+      ...adminData.map((admin) => admin.user_id),
+    ].filter((value): value is string => typeof value === "string")
+  );
+  const blockedEmails = new Set(
+    [
+      ...cleanerData.map((cleaner) => cleaner.email),
+      ...adminData.map((admin) => admin.email),
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.toLowerCase())
+  );
+  const blockedPhones = new Set(
+    cleanerData
+      .map((cleaner) => cleaner.phone)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+  );
+
+  return (data ?? [])
+    .map(mapCustomer)
+    .filter((customer) => {
+      const email = customer.email.toLowerCase();
+      return !(
+        (customer.user_id && blockedUserIds.has(customer.user_id)) ||
+        blockedEmails.has(email) ||
+        (customer.phone && blockedPhones.has(customer.phone))
+      );
+    });
+}
+
+export async function getAdmins(): Promise<AdminUser[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("admins")
+    .select(
+      "id, user_id, full_name, email, phone, permission_level, status, created_at, updated_at"
+    )
+    .order("permission_level", { ascending: true })
+    .order("full_name", { ascending: true });
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (isSupabaseSchemaMissingError(normalizedError)) {
+      return [];
+    }
+
+    throw normalizedError;
+  }
+
+  return (data ?? []).map(mapAdminUser);
 }
 
 export async function getReviews(): Promise<Review[]> {
@@ -593,13 +723,29 @@ export async function getRecurringPlanChangeRequests(
 }
 
 export async function getCleaners(): Promise<Cleaner[]> {
-  const { data, error } = await getSupabaseAdmin()
+  let { data, error } = await getSupabaseAdmin()
     .from("cleaners")
     .select(cleanerSelect)
+    .eq("account_role", "cleaner")
     .order("full_name", { ascending: true });
 
   if (error) {
-    throw toSupabaseError(error);
+    const normalizedError = toSupabaseError(error);
+
+    if (!isSupabaseSchemaMissingError(normalizedError)) {
+      throw normalizedError;
+    }
+
+    const legacyResult = await getSupabaseAdmin()
+      .from("cleaners")
+      .select(cleanerSelect)
+      .order("full_name", { ascending: true });
+
+    if (legacyResult.error) {
+      throw toSupabaseError(legacyResult.error);
+    }
+
+    data = legacyResult.data;
   }
 
   return (data ?? []).map(mapCleaner);
@@ -608,11 +754,27 @@ export async function getCleaners(): Promise<Cleaner[]> {
 export async function getCleanerById(
   cleanerId: string
 ): Promise<CleanerWithAvailability | null> {
-  const { data, error } = await getSupabaseAdmin()
+  let { data, error } = await getSupabaseAdmin()
     .from("cleaners")
     .select(cleanerSelect)
     .eq("id", cleanerId)
+    .eq("account_role", "cleaner")
     .single();
+
+  if (error) {
+    const normalizedError = toSupabaseError(error);
+
+    if (isSupabaseSchemaMissingError(normalizedError)) {
+      const legacyResult = await getSupabaseAdmin()
+        .from("cleaners")
+        .select(cleanerSelect)
+        .eq("id", cleanerId)
+        .single();
+
+      data = legacyResult.data;
+      error = legacyResult.error;
+    }
+  }
 
   if (error) {
     if (error.code === "PGRST116") {
@@ -634,7 +796,8 @@ export async function getCleanerByUserIdOrEmail(
 ): Promise<CleanerWithAvailability | null> {
   let query = getSupabaseAdmin()
     .from("cleaners")
-    .select(cleanerSelect);
+    .select(cleanerSelect)
+    .eq("account_role", "cleaner");
 
   if (email) {
     query = query.or(`user_id.eq.${userId},email.ilike.${email}`);
@@ -642,7 +805,21 @@ export async function getCleanerByUserIdOrEmail(
     query = query.eq("user_id", userId);
   }
 
-  const { data, error } = await query.limit(1).maybeSingle();
+  let { data, error } = await query.limit(1).maybeSingle();
+
+  if (error && isSupabaseSchemaMissingError(toSupabaseError(error))) {
+    let legacyQuery = getSupabaseAdmin().from("cleaners").select(cleanerSelect);
+
+    if (email) {
+      legacyQuery = legacyQuery.or(`user_id.eq.${userId},email.ilike.${email}`);
+    } else {
+      legacyQuery = legacyQuery.eq("user_id", userId);
+    }
+
+    const legacyResult = await legacyQuery.limit(1).maybeSingle();
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
 
   if (error) {
     throw toSupabaseError(error);
@@ -1362,6 +1539,7 @@ function mapRecurringBooking(
     address: address ? mapCustomerAddress(address) : null,
     frequency: normaliseRecurringFrequency(recurringBooking.frequency),
     preferred_day: String(recurringBooking.preferred_day ?? ""),
+    preferred_days: normaliseStringList(recurringBooking.preferred_days),
     preferred_time: String(recurringBooking.preferred_time ?? ""),
     service_data: normaliseServiceData(recurringBooking.service_data),
     selected_addons: normaliseAddonData(recurringBooking.selected_addons),
@@ -1514,11 +1692,25 @@ function mapRecurringPlanChangeRequest(
 function mapCustomer(customer: Record<string, unknown>): Customer {
   return {
     id: String(customer.id ?? ""),
-    user_id: String(customer.user_id ?? ""),
+    user_id: typeof customer.user_id === "string" ? customer.user_id : null,
     full_name: String(customer.full_name ?? ""),
     email: String(customer.email ?? ""),
     phone: typeof customer.phone === "string" ? customer.phone : null,
     created_at: String(customer.created_at ?? ""),
+  };
+}
+
+function mapAdminUser(admin: Record<string, unknown>): AdminUser {
+  return {
+    id: String(admin.id ?? ""),
+    user_id: String(admin.user_id ?? ""),
+    full_name: String(admin.full_name ?? ""),
+    email: String(admin.email ?? ""),
+    phone: typeof admin.phone === "string" ? admin.phone : null,
+    permission_level: normaliseAdminPermissionLevel(admin.permission_level),
+    status: admin.status === "Inactive" ? "Inactive" : "Active",
+    created_at: String(admin.created_at ?? ""),
+    updated_at: String(admin.updated_at ?? admin.created_at ?? ""),
   };
 }
 
@@ -1796,11 +1988,31 @@ function normaliseRequestStatus(value: unknown): RequestStatus {
 function normaliseRecurringFrequency(value: unknown): RecurringFrequency {
   const frequency = String(value ?? "Weekly");
 
-  if (frequency === "Bi-weekly" || frequency === "Monthly") {
+  if (
+    frequency === "Bi-weekly" ||
+    frequency === "Monthly" ||
+    frequency === "Custom days"
+  ) {
     return frequency;
   }
 
   return "Weekly";
+}
+
+function normaliseAdminPermissionLevel(
+  value: unknown
+): AdminUser["permission_level"] {
+  const permissionLevel = String(value ?? "Admin");
+
+  if (
+    permissionLevel === "Owner" ||
+    permissionLevel === "Operations" ||
+    permissionLevel === "Support"
+  ) {
+    return permissionLevel;
+  }
+
+  return "Admin";
 }
 
 function normaliseRecurringStatus(value: unknown): RecurringBookingStatus {
@@ -2154,7 +2366,8 @@ function normaliseRecurringSetup(
   if (
     frequency !== "Weekly" &&
     frequency !== "Bi-weekly" &&
-    frequency !== "Monthly"
+    frequency !== "Monthly" &&
+    frequency !== "Custom days"
   ) {
     return null;
   }
@@ -2162,6 +2375,7 @@ function normaliseRecurringSetup(
   return {
     frequency,
     preferredDay: String(setup.preferredDay ?? ""),
+    preferredDays: normaliseStringList(setup.preferredDays),
     preferredTime: String(setup.preferredTime ?? ""),
     firstBookingDate: String(setup.firstBookingDate ?? ""),
     addressId:

@@ -16,6 +16,7 @@ export const recurringFrequencyOptions = [
   "Weekly",
   "Bi-weekly",
   "Monthly",
+  "Custom days",
 ] as const satisfies RecurringFrequency[];
 
 export function normalizeRecurringFrequency(
@@ -36,6 +37,10 @@ export function normalizeRecurringFrequency(
 
   if (frequency === "monthly") {
     return "Monthly";
+  }
+
+  if (frequency === "customdays" || frequency === "custom") {
+    return "Custom days";
   }
 
   return null;
@@ -77,7 +82,7 @@ export function getFirstRecurringDate(
   frequency: RecurringFrequency,
   preferredDay: string
 ) {
-  if (frequency !== "Weekly") {
+  if (frequency !== "Weekly" && frequency !== "Custom days") {
     return dateInput;
   }
 
@@ -106,10 +111,10 @@ export function getNextRecurringDate(
 ) {
   const date = new Date(`${dateInput}T00:00:00`);
 
-  if (frequency === "Weekly") {
+  if (frequency === "Weekly" || frequency === "Custom days") {
     const selectedDays = normalisePreferredDays(preferredDay);
 
-    if (selectedDays.length > 1) {
+    if (selectedDays.length > 1 || frequency === "Custom days") {
       for (let offset = 1; offset <= 7; offset += 1) {
         const candidate = addDays(date, offset);
         if (selectedDays.includes(weekdayNameFromDate(toDateInput(candidate)))) {

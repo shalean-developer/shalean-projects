@@ -14,7 +14,7 @@ export const recurringBookingSchema = z
     serviceSlug: z.string().min(1, "Choose a cleaning service."),
     serviceData: z.record(z.string(), serviceValueSchema),
     selectedAddons: z.array(z.string()),
-    frequency: z.enum(["Weekly", "Bi-weekly", "Monthly"], {
+    frequency: z.enum(["Weekly", "Bi-weekly", "Monthly", "Custom days"], {
       error: "Choose a recurring frequency.",
     }),
     preferredDay: z.string().min(1, "Choose a preferred day."),
@@ -35,11 +35,14 @@ export const recurringBookingSchema = z
     }),
   })
   .superRefine((values, ctx) => {
-    if (values.frequency === "Weekly" && !values.preferredDays.length) {
+    if (
+      (values.frequency === "Weekly" || values.frequency === "Custom days") &&
+      !values.preferredDays.length
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["preferredDays"],
-        message: "Choose at least one weekly day.",
+        message: "Choose at least one recurring day.",
       });
     }
 
@@ -88,11 +91,11 @@ export const defaultRecurringBookingValues: RecurringBookingValues = {
 };
 
 export function getRecurringPreferredDayLabel(values: {
-  frequency: "Weekly" | "Bi-weekly" | "Monthly";
+  frequency: "Weekly" | "Bi-weekly" | "Monthly" | "Custom days";
   preferredDay: string;
   preferredDays: string[];
 }) {
-  return values.frequency === "Weekly"
+  return values.frequency === "Weekly" || values.frequency === "Custom days"
     ? formatPreferredDays(values.preferredDays)
     : values.preferredDay;
 }
