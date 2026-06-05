@@ -38,7 +38,7 @@ export default function MaidServicesPage() {
         secondaryHref="/services"
         compact
       />
-      <section className="py-10">
+      <section className="bg-secondary/35 py-12 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-7xl gap-8 px-5 sm:px-8 lg:px-10">
           <Breadcrumbs items={[{ label: "Maid Services Cape Town" }]} />
           <div className="grid gap-4 md:grid-cols-2">
@@ -46,7 +46,7 @@ export default function MaidServicesPage() {
               <ServiceCard key={service.slug} service={service} />
             ))}
           </div>
-          <section className="grid gap-4 rounded-lg border bg-card p-5">
+          <section className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
             <h2 className="text-2xl font-semibold tracking-normal">
               What Shalean maid services can cover
             </h2>
@@ -78,4 +78,3 @@ export default function MaidServicesPage() {
     </PublicPage>
   );
 }
-

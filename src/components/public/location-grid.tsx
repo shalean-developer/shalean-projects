@@ -21,7 +21,7 @@ export function LocationGrid({
           href={`/locations/${location.slug}`}
           className="rounded-lg focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
-          <Card className="h-full rounded-lg border-border/80 shadow-sm transition-colors hover:border-primary/40">
+          <Card className="h-full rounded-lg border-border/80 bg-white shadow-[0_14px_38px_rgba(10,66,42,0.06)] transition-colors hover:border-primary/40">
             <CardHeader>
               <div className="flex items-center gap-2 text-primary">
                 <MapPin className="size-4" aria-hidden="true" />
@@ -40,4 +40,3 @@ export function LocationGrid({
     </div>
   );
 }
-

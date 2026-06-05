@@ -20,7 +20,7 @@ export const metadata: Metadata = publicMetadata({
 export default function SignupPage() {
   return (
     <PublicPage>
-      <section className="bg-[radial-gradient(circle_at_top,rgba(49,128,91,0.16),transparent_30rem),var(--background)] px-5 py-12 sm:px-8 sm:py-16">
+      <section className="bg-secondary/35 px-5 py-12 sm:px-8 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-5xl gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
           <div className="grid gap-5">
             <Breadcrumbs items={[{ label: "Sign Up" }]} />
@@ -57,7 +57,7 @@ export default function SignupPage() {
               </Link>
             </div>
           </div>
-          <Card className="rounded-lg">
+          <Card className="rounded-lg bg-white shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
             <CardHeader>
               <CardTitle>Create your account</CardTitle>
             </CardHeader>

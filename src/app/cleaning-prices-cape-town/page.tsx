@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, Info } from "lucide-react";
+import { ArrowRight, CheckCircle2, Info } from "lucide-react";
 
 import { Breadcrumbs } from "@/components/public/breadcrumbs";
 import { FAQSection } from "@/components/public/faq-section";
 import { FinalCTA } from "@/components/public/final-cta";
 import { HeroSection } from "@/components/public/hero-section";
+import { PublicPricingCard } from "@/components/public/pricing-card";
 import { PublicPage } from "@/components/public/public-page";
 import { buttonVariants } from "@/components/ui/button";
 import { pricingFaqs } from "@/config/public-faqs";
@@ -20,6 +21,8 @@ export const metadata: Metadata = publicMetadata({
 });
 
 export default function CleaningPricesPage() {
+  const highlightedServices = publicServices.slice(0, 4);
+
   return (
     <PublicPage>
       <HeroSection
@@ -30,34 +33,22 @@ export default function CleaningPricesPage() {
         secondaryHref="/services"
         compact
       />
-      <section className="py-10">
+      <section className="bg-secondary/45 py-12 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-7xl gap-8 px-5 sm:px-8 lg:px-10">
           <Breadcrumbs items={[{ label: "Cleaning Prices Cape Town" }]} />
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {publicServices.map((service) => (
-              <div key={service.slug} className="grid gap-4 rounded-lg border bg-card p-5">
-                <div>
-                  <h2 className="text-xl font-semibold tracking-normal">
-                    {service.name}
-                  </h2>
-                  <p className="mt-2 text-lg font-semibold text-primary">
-                    {service.fromPrice}
-                  </p>
-                </div>
-                <p className="text-sm leading-6 text-muted-foreground">
-                  {service.bestFor}
-                </p>
-                <Link
-                  href={`/services/${service.slug}`}
-                  className="inline-flex items-center gap-1 rounded-sm text-sm font-medium hover:text-primary focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  View service
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </Link>
-              </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {highlightedServices.map((service) => (
+              <PublicPricingCard
+                key={service.slug}
+                title={service.name}
+                price={service.fromPrice}
+                href={`/book?service=${service.bookingSlug}`}
+                featured={service.slug === "deep-cleaning-cape-town"}
+                bullets={service.included.slice(0, 3)}
+              />
             ))}
           </div>
-          <div className="grid gap-4 rounded-lg border bg-card p-5">
+          <div className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
             <div className="flex gap-3">
               <Info className="mt-1 size-5 shrink-0 text-primary" aria-hidden="true" />
               <div>
@@ -74,11 +65,35 @@ export default function CleaningPricesPage() {
             </div>
             <Link
               href="/book"
-              className={buttonVariants({ className: "h-10 w-fit px-4" })}
+              className={buttonVariants({ className: "h-11 w-fit px-4" })}
             >
               Request an Instant Quote
             </Link>
           </div>
+          <section className="grid gap-4">
+            <h2 className="text-2xl font-semibold tracking-normal">
+              Other service guidance
+            </h2>
+            <div className="grid gap-4 md:grid-cols-3">
+              {publicServices.slice(4).map((service) => (
+                <Link
+                  key={service.slug}
+                  href={`/services/${service.slug}`}
+                  className="grid gap-3 rounded-lg border border-border/80 bg-white p-5 shadow-sm hover:border-primary/35"
+                >
+                  <span className="text-sm font-semibold text-primary">
+                    {service.fromPrice}
+                  </span>
+                  <span className="text-lg font-semibold">{service.name}</span>
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
+                    View service details
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
         </div>
       </section>
       <FAQSection title="Cleaning Price FAQs" faqs={pricingFaqs} />
@@ -86,4 +101,3 @@ export default function CleaningPricesPage() {
     </PublicPage>
   );
 }
-

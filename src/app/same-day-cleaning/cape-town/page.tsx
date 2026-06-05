@@ -29,7 +29,7 @@ export default function SameDayCapeTownPage() {
         secondaryHref="/services"
         compact
       />
-      <section className="py-10">
+      <section className="bg-secondary/35 py-12 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-5xl gap-8 px-5 sm:px-8 lg:px-10">
           <Breadcrumbs
             items={[
@@ -38,7 +38,7 @@ export default function SameDayCapeTownPage() {
             ]}
           />
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-4 rounded-lg border bg-card p-5">
+            <div className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
               <Clock className="size-7 text-primary" aria-hidden="true" />
               <h2 className="text-2xl font-semibold tracking-normal">
                 Best for urgent cleaning requests
@@ -49,7 +49,7 @@ export default function SameDayCapeTownPage() {
                 in Cape Town.
               </p>
             </div>
-            <div className="grid gap-4 rounded-lg border bg-card p-5">
+            <div className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
               <Sparkles className="size-7 text-primary" aria-hidden="true" />
               <h2 className="text-2xl font-semibold tracking-normal">
                 Clear scope helps availability
@@ -74,4 +74,3 @@ export default function SameDayCapeTownPage() {
     </PublicPage>
   );
 }
-

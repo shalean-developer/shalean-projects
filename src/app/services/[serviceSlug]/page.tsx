@@ -62,7 +62,7 @@ export default async function ServicePage({ params }: ServicePageProps) {
         secondaryLabel="View Pricing"
         compact
       />
-      <section className="py-10">
+      <section className="bg-secondary/35 py-12 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-7xl gap-8 px-5 sm:px-8 lg:px-10">
           <Breadcrumbs
             items={[
@@ -90,7 +90,7 @@ export default async function ServicePage({ params }: ServicePageProps) {
                     <Link
                       key={location.slug}
                       href={`/locations/${location.slug}`}
-                      className="inline-flex items-center gap-1 rounded-full border bg-card px-3 py-1 text-sm hover:border-primary/50 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    className="inline-flex items-center gap-1 rounded-full border border-primary/15 bg-white px-3 py-1 text-sm font-medium hover:border-primary/50 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
                       <MapPin className="size-3.5 text-primary" aria-hidden="true" />
                       {location.name}
@@ -99,7 +99,7 @@ export default async function ServicePage({ params }: ServicePageProps) {
                 </div>
               </section>
             </div>
-            <aside className="grid gap-4 rounded-lg border bg-card p-5">
+            <aside className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
               <h2 className="text-xl font-semibold tracking-normal">
                 Service snapshot
               </h2>
@@ -149,7 +149,7 @@ function InfoSection({ title, items }: { title: string; items: string[] }) {
       <h2 className="text-2xl font-semibold tracking-normal">{title}</h2>
       <div className="grid gap-3 sm:grid-cols-2">
         {items.map((item) => (
-          <div key={item} className="flex gap-3 rounded-lg border bg-card p-4">
+          <div key={item} className="flex gap-3 rounded-lg border border-border/80 bg-white p-4 shadow-sm">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
             <p className="text-sm leading-6 text-muted-foreground">{item}</p>
           </div>
@@ -158,4 +158,3 @@ function InfoSection({ title, items }: { title: string; items: string[] }) {
     </section>
   );
 }
-

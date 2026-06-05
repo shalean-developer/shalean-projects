@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { AuthForm } from "@/components/account/auth-forms";
+import { PublicPage } from "@/components/public/public-page";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { hasSupabaseAuthConfig } from "@/lib/supabase/server";
@@ -33,20 +34,22 @@ function AuthShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="grid min-h-screen bg-background px-5 py-8">
-      <section className="mx-auto grid w-full max-w-md content-center gap-5">
+    <PublicPage>
+      <section className="grid min-h-[calc(100vh-4rem)] bg-secondary/35 px-5 py-12 sm:px-8 sm:py-16">
+        <div className="mx-auto grid w-full max-w-md content-center gap-5">
         <div className="text-center">
           <h1 className="mt-2 text-3xl font-semibold tracking-normal">{title}</h1>
           <p className="mt-3 text-muted-foreground">{subtitle}</p>
         </div>
-        <Card className="rounded-lg">
+        <Card className="rounded-lg bg-white shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
           <CardContent>{children}</CardContent>
         </Card>
         <Link href="/" className={buttonVariants({ variant: "ghost", className: "mx-auto" })}>
           Back home
         </Link>
+        </div>
       </section>
-    </main>
+    </PublicPage>
   );
 }
 

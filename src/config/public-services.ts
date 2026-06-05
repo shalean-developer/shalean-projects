@@ -215,7 +215,7 @@ export const publicServices: PublicService[] = [
     description:
       "Office cleaning keeps workspaces healthier, more organised, and more welcoming. Shalean supports Cape Town offices with practical cleaning for desks, shared kitchens, bathrooms, floors, and team areas.",
     bestFor: "Small businesses, studios, professional offices, and shared workspaces.",
-    fromPrice: "from R650",
+    fromPrice: "from R450",
     included: [
       "Desk, surface, and shared-area wipe-downs",
       "Kitchen, bathroom, bin, and floor service",
@@ -262,7 +262,7 @@ export const publicServices: PublicService[] = [
     description:
       "Carpet cleaning targets fabric condition rather than general room tidying. Shalean captures the room count, carpet area, and stain needs so your Cape Town carpet clean is planned accurately.",
     bestFor: "Stains, odours, rugs, rental refreshes, and high-traffic carpeted rooms.",
-    fromPrice: "from R500",
+    fromPrice: "from R800",
     included: [
       "Carpet assessment based on rooms, area, and visible condition",
       "Standard carpet cleaning for selected rooms or zones",
@@ -350,4 +350,3 @@ export const publicServices: PublicService[] = [
 export function getPublicService(slug: string) {
   return publicServices.find((service) => service.slug === slug);
 }
-

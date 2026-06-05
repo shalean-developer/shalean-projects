@@ -27,11 +27,11 @@ export default function HelpPage() {
         description="Find support for service selection, booking details, add-ons, pricing guidance, and Shalean cleaning requests."
         compact
       />
-      <section className="py-10">
+      <section className="bg-secondary/35 py-12 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-5xl gap-8 px-5 sm:px-8 lg:px-10">
           <Breadcrumbs items={[{ label: "Help" }]} />
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-4 rounded-lg border bg-card p-5">
+            <div className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
               <Phone className="size-7 text-primary" aria-hidden="true" />
               <h2 className="text-2xl font-semibold tracking-normal">Call</h2>
               <p className="text-sm leading-6 text-muted-foreground">
@@ -45,7 +45,7 @@ export default function HelpPage() {
                 087 153 5250
               </a>
             </div>
-            <div className="grid gap-4 rounded-lg border bg-card p-5">
+            <div className="grid gap-4 rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
               <MessageCircle className="size-7 text-primary" aria-hidden="true" />
               <h2 className="text-2xl font-semibold tracking-normal">
                 WhatsApp
@@ -62,7 +62,7 @@ export default function HelpPage() {
               </a>
             </div>
           </div>
-          <div className="rounded-lg border bg-card p-5">
+          <div className="rounded-lg border border-border/80 bg-white p-5 shadow-[0_14px_38px_rgba(10,66,42,0.06)]">
             <h2 className="text-2xl font-semibold tracking-normal">
               Common booking paths
             </h2>
@@ -97,4 +97,3 @@ export default function HelpPage() {
     </PublicPage>
   );
 }
-

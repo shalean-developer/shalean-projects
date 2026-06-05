@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shalean Page Design System"
+  short_description: "Design rules for Shalean public pages"
+  default_prompt: "Use $shalean-page-design-system to design or audit a Shalean public website page."

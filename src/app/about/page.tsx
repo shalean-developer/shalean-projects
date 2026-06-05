@@ -25,7 +25,7 @@ export default function AboutPage() {
         description="Shalean helps customers request the right cleaning service with a focused online flow for homes, rentals, offices, carpets, and detailed property cleans."
         compact
       />
-      <section className="py-10">
+      <section className="bg-secondary/35 py-12 sm:py-16 lg:py-20">
         <div className="mx-auto grid w-full max-w-5xl gap-8 px-5 sm:px-8 lg:px-10">
           <Breadcrumbs items={[{ label: "About" }]} />
           <div className="grid gap-5 text-sm leading-7 text-muted-foreground">
@@ -52,7 +52,7 @@ export default function AboutPage() {
               "Service-specific cleaning scopes",
               "Online booking for customers and teams",
             ].map((item) => (
-              <div key={item} className="flex gap-3 rounded-lg border bg-card p-4">
+              <div key={item} className="flex gap-3 rounded-lg border border-border/80 bg-white p-4 shadow-sm">
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
                 <p className="text-sm leading-6 text-muted-foreground">{item}</p>
               </div>
@@ -70,4 +70,3 @@ export default function AboutPage() {
     </PublicPage>
   );
 }
-
